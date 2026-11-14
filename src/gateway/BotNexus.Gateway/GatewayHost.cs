@@ -649,6 +649,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                         Message = "Agent is busy; your message was queued and will be delivered when the current turn completes."
                     }, cancellationToken);
 
+                    await DeleteRedundantFollowUpSentinelAsync(session, runFence, cancellationToken);
                     continue;
                 }
 
@@ -1344,6 +1345,36 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         };
         session.AddEntry(crashSentinel);
         await _sessions.SaveAsync(session, cancellationToken);
+    }
+
+    // A message queued into a running turn as a follow-up asks the store to delete the sentinel it wrote
+    // in PrepareTurnAsync, which the store does only while another sentinel (the running turn's) is
+    // still stored. The running turn's clean completion cannot remove this row: over the SQLite store it
+    // saves a different session aggregate, so the row would outlive the turn and the next start would
+    // report the finished session as interrupted. Over a store that hands out a private aggregate, the
+    // newest sentinel in it is the one PrepareTurnAsync appended last for this message. A refusal or a
+    // failure keeps the sentinel.
+    private async Task DeleteRedundantFollowUpSentinelAsync(
+        GatewaySession session, SessionWriteFence runFence, CancellationToken cancellationToken)
+    {
+        if (session.GetHistorySnapshot().LastOrDefault(static entry => entry.IsCrashSentinel)?.PersistenceKey is not { } key)
+            return;
+
+        try
+        {
+            if (!await _sessions.TryDeleteRedundantCrashSentinelAsync(runFence, key, cancellationToken))
+            {
+                _logger.LogDebug(
+                    "Kept the crash sentinel of a queued follow-up for session '{SessionId}': the store refused the delete.",
+                    runFence.ExpectedSessionId.Value);
+            }
+        }
+        catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning(ex,
+                "Could not delete the crash sentinel of a queued follow-up for session '{SessionId}'; it is kept.",
+                runFence.ExpectedSessionId.Value);
+        }
     }
 
     private async Task SendSessionStatusRejectedAsync(

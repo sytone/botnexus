@@ -99,6 +99,11 @@ public abstract class SessionStoreBase : ISessionStore
     }
 
     /// <inheritdoc />
+    public virtual Task<bool> TryDeleteRedundantCrashSentinelAsync(
+        SessionWriteFence fence, string persistenceKey, CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    /// <inheritdoc />
     public virtual async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
         int limit, string? cursor = null, CancellationToken cancellationToken = default)
     {

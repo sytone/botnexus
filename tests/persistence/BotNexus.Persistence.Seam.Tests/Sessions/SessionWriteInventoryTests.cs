@@ -44,6 +44,14 @@ public sealed class SessionWriteInventoryTests
             + "against a Sealed/Expired row so an append cannot revive a terminal session; the row "
             + "is never created (NotFound). Status probe and inserts share one striped lock."),
 
+        new("sessions", nameof(ISessionStore.TryDeleteRedundantCrashSentinelAsync), WriteClassification.Fenced,
+            "removal of one session_history crash-sentinel row, matched by persistence key",
+            "One conditional DELETE (is_crash_sentinel = 1, the key, and another sentinel of the session "
+            + "still stored) after SessionFenceEvaluator.Passes over a re-read of (status, conversation_id), "
+            + "in one transaction under the striped lock: a deleted, sealed/expired or rebound session is "
+            + "refused. No other row, column or session is written and no aggregate is saved, so it cannot "
+            + "revert a concurrent update; the cache is evicted only when a row was deleted."),
+
         new("sessions", nameof(ISessionStore.PatchMetadataAsync), WriteClassification.Merge,
             "the metadata column only (keys mapped to null are removed) plus updated_at",
             "Read-merge-write of the metadata column under one striped session lock, so two "
