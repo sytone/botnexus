@@ -900,6 +900,12 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
                     // in the session store. Channel adapters already suppress delivery (#1237).
                     if (!IsNoReply(response.Content))
                         session.AddEntry(new SessionEntry { AgentRunId = response.AgentRunId, Role = MessageRole.Assistant, Content = response.Content, Kind = StampKind(responseKind) });
+
+                    // A run that settled Failed gets one error row after the reply, in the words the streaming
+                    // branch uses, so the failure is not lost. Only the row is added: sentinel and lifecycle-event
+                    // handling are unchanged here and differ from the streaming branch.
+                    if (StreamingSessionHelper.IsTerminalFailure(response.Completion))
+                        session.AddEntry(StreamingSessionHelper.CreateFailedRunEntry(response.AgentRunId, response.TerminalError, response.Completion));
                 }
 
                 // Remove crash sentinel on clean turn completion (#363).
