@@ -290,6 +290,29 @@ public interface ISessionStore
     }
 
     /// <summary>
+    /// Deletes one crash-sentinel row of the fenced session, identified by its persistence key, only while
+    /// another crash-sentinel row of that session remains stored. The session therefore never loses its
+    /// last interruption marker through this call.
+    /// </summary>
+    /// <remarks>
+    /// Contract: the operation either deletes exactly that one row or changes nothing. It never writes any
+    /// other history row, the session row, its metadata or another session, and it never materialises or
+    /// saves an aggregate. It returns <see langword="false"/> and changes nothing when the session was
+    /// deleted, sealed, expired or rebound since <paramref name="fence"/> was captured; when the session has
+    /// no row with that key; when that row is not a crash sentinel; when deleting it would remove the
+    /// session's last crash sentinel; or when the store does not support the operation (the default).
+    /// </remarks>
+    /// <param name="fence">The session identity the caller captured; the delete is refused when it no longer holds.</param>
+    /// <param name="persistenceKey">The persistence key of the sentinel row to delete.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    /// <returns><see langword="true"/> when the row was deleted.</returns>
+    Task<bool> TryDeleteRedundantCrashSentinelAsync(
+        SessionWriteFence fence,
+        string persistenceKey,
+        CancellationToken cancellationToken = default)
+        => Task.FromResult(false);
+
+    /// <summary>
     /// Returns one globally-scoped, bounded, transcript-free page of nonterminal sessions that still contain crash sentinels.
     /// Callers hydrate one selected session at a time through <see cref="GetAsync"/>.
     /// </summary>
