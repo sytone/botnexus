@@ -3,12 +3,16 @@ using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Activity;
 using BotNexus.Gateway.Abstractions.Agents;
 using BotNexus.Gateway.Abstractions.Channels;
+using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Routing;
 using BotNexus.Gateway.Abstractions.Sessions;
+using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Services;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Agent.Core.Types;
+using BotNexus.Persistence.Sqlite;
+using Microsoft.Data.Sqlite;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
 using AgentUserMessage = BotNexus.Gateway.Abstractions.Models.AgentUserMessage;
@@ -115,7 +119,105 @@ public sealed class GatewayHostBusyAgentTests
         session.History.ShouldContain(e => e.Role == MessageRole.Assistant && e.Content == "idle reply");
     }
 
+    [Fact]
+    public async Task ProcessAsync_FollowUpJoinsRunningHostTurn_NoCrashSentinelStoredAfterTurnCompletes()
+    {
+        // A real SQLite store hands each ProcessAsync its own aggregate, so the running turn's clean
+        // completion cannot see the sentinel the follow-up wrote. A shared in-memory aggregate hides that.
+        // Calling ProcessAsync directly stands in for two isolation keys (for example a channel message
+        // and a conversation-tool post for one session), the only way two turns overlap in production.
+        await using var rig = new SentinelRig(followUpAdmittedWhen: running => running);
+        var firstTurn = rig.Host.ProcessAsync(CreateMessage("first message", sessionId: "session-1"), CancellationToken.None);
+        await rig.Entered.Task.WaitAsync(TimeSpan.FromSeconds(30));
+        var runningTurnSentinel = (await rig.ReadStoredSentinelIdsAsync()).ShouldHaveSingleItem();
+
+        await rig.Host.ProcessAsync(CreateMessage("second message", sessionId: "session-1"), CancellationToken.None);
+        rig.Activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.FollowUpQueued);
+        var whileRunning = await rig.ReadStoredSentinelIdsAsync();
+        whileRunning.ShouldContain(runningTurnSentinel, "while the turn runs, its own sentinel must still protect it");
+
+        rig.Release.TrySetResult(new AgentResponse { Content = "both answered" });
+        await firstTurn.WaitAsync(TimeSpan.FromSeconds(30));
+
+        rig.Activity.Activities.ShouldNotContain(a => a.Type == GatewayActivityType.Error);
+        (await rig.ReadStoredSentinelIdsAsync()).ShouldBeEmpty(
+            "the follow-up was answered by the completed turn, so a restart must find nothing to replay");
+        whileRunning.ShouldBe([runningTurnSentinel], "while the turn ran, its sentinel was the only one stored");
+    }
+
+    [Fact]
+    public async Task ProcessAsync_FollowUpJoinsRunNotStartedByHost_KeepsItsCrashSentinel()
+    {
+        // No host turn wrote a sentinel, so the follow-up's own is the only crash protection of the run.
+        await using var rig = new SentinelRig(followUpAdmittedWhen: _ => true);
+
+        await rig.Host.ProcessAsync(CreateMessage("second message", sessionId: "session-1"), CancellationToken.None);
+
+        rig.Activity.Activities.ShouldContain(a => a.Type == GatewayActivityType.FollowUpQueued);
+        (await rig.ReadStoredSentinelIdsAsync()).Count.ShouldBe(1, "the follow-up's own sentinel must be kept");
+    }
+
     // ── helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>A host over a real SQLite store and a handle whose blocking prompt is held by a gate.</summary>
+    private sealed class SentinelRig : IAsyncDisposable
+    {
+        private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"botnexus-busy-sentinel-{Guid.NewGuid():N}.db");
+        private string ConnectionString => new SqliteConnectionStringBuilder { DataSource = _dbPath, Pooling = false }.ToString();
+
+        public SentinelRig(Func<bool, bool> followUpAdmittedWhen)
+        {
+            var running = false;
+            var handle = new Mock<IAgentHandle>();
+            handle.Setup(h => h.TryFollowUpWhileRunningAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(() => followUpAdmittedWhen(running));
+            handle.Setup(h => h.PromptAsync(It.IsAny<AgentUserMessage>(), It.IsAny<CancellationToken>()))
+                .Returns(() =>
+                {
+                    running = true;
+                    Entered.TrySetResult();
+                    return Release.Task;
+                });
+            var supervisor = new Mock<IAgentSupervisor>();
+            supervisor.Setup(s => s.GetOrCreateAsync(AgentId.From("agent-a"), SessionId.From("session-1"), It.IsAny<CancellationToken>()))
+                .ReturnsAsync(handle.Object);
+            var router = new Mock<IMessageRouter>();
+            router.Setup(r => r.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>())).ReturnsAsync(["agent-a"]);
+
+            var conversations = new InMemoryConversationStore();
+            var store = new SqliteSessionStore(ConnectionString, NullLogger<SqliteSessionStore>.Instance, conversations);
+            Host = CreateHost(
+                supervisor.Object, router.Object, store, Activity,
+                CreateChannelManager(CreateChannelAdapter("web", supportsStreaming: false).Object), conversations);
+        }
+
+        public GatewayHost Host { get; }
+        public RecordingActivityBroadcaster Activity { get; } = new();
+        public TaskCompletionSource Entered { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public TaskCompletionSource<AgentResponse> Release { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public async Task<List<long>> ReadStoredSentinelIdsAsync()
+        {
+            await using var connection = SqliteConnectionFactory.Create(ConnectionString);
+            await connection.OpenAsync();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT id FROM session_history WHERE is_crash_sentinel = 1 ORDER BY id";
+            await using var reader = await command.ExecuteReaderAsync();
+            var ids = new List<long>();
+            while (await reader.ReadAsync())
+                ids.Add(reader.GetInt64(0));
+            return ids;
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Release.TrySetResult(new AgentResponse { Content = "released at teardown" });
+            await Host.DisposeAsync();
+            SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString);
+            try { File.Delete(_dbPath); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { /* A lingering file lock must not fail the run. */ }
+        }
+    }
 
     /// <summary>
     /// Drives one inbound message at an agent whose handle reports a live run. Both the streaming
@@ -214,7 +316,8 @@ public sealed class GatewayHostBusyAgentTests
         IMessageRouter router,
         ISessionStore sessions,
         IActivityBroadcaster activity,
-        IChannelManager channelManager)
+        IChannelManager channelManager,
+        IConversationStore? conversationStore = null)
         => new(
             supervisor,
             router,
@@ -223,7 +326,8 @@ public sealed class GatewayHostBusyAgentTests
             channelManager,
             Mock.Of<ISessionCompactor>(),
             new TestOptionsMonitor<CompactionOptions>(new CompactionOptions()),
-            NullLogger<GatewayHost>.Instance);
+            NullLogger<GatewayHost>.Instance,
+            conversationStore: conversationStore);
 
     private static InboundMessage CreateMessage(
         string content,
