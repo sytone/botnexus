@@ -138,7 +138,7 @@ Two properties are deliberate:
 - **A filtered run never accuses a project it was not going to run.** `core` excludes the browser/E2E projects, so their absence from the results is by design. A confidently wrong attribution is worse than none.
 - **An empty outstanding set is stated, not filled in.** "Every project reported and the phase still overran" is a real and different finding — the overrun is outside test execution — and inventing a culprit would hide it.
 
-`infra/buildtest/runner/tests/RunnerTimeout.Tests.ps1` pins all of this, including the truncated-TRX case and the sensitivity of the derivation to the budget; `RunnerDeadlineConsistencyTests` fails the build if the budget stops being passed through or the bound is removed.
+The standalone runner timeout tests pins all of this, including the truncated-TRX case and the sensitivity of the derivation to the budget; `RunnerDeadlineConsistencyTests` fails the build if the budget stops being passed through or the bound is removed.
 
 **The budget itself was deliberately not raised.** A larger number would hide the defect rather than remove it: the failure mode was "killed, no evidence", not "killed too early". Whether `-Mode full` genuinely needs more than 20 minutes is a separate question, answerable only once a timed-out run produces attribution — which is what this change delivers.
 
@@ -162,32 +162,16 @@ The deployed job uses 4 vCPU, 8 GiB, and a two-hour timeout. All identifiers can
 
 ## Provision or update infrastructure
 
-The Bicep template and runner image live under `infra/buildtest/`. The existing deployment procedure below is a separate operator action; reading this guide or passing compatibility checks does not authorize it. Deployment alone does not publish an approved release manifest. Review the [qualification lifecycle](runner-release-contract.md#operator-prerequisites-and-lifecycle) separately. Deployment requires Owner or equivalent resource and RBAC permissions:
+Infrastructure provisioning, templates, image/runtime code and image updates now
+belong to [sytone/botnexus-runner](https://github.com/sytone/botnexus-runner).
+Use that repository's infrastructure guide for registry creation, ACR image
+build/publication, Azure validation, deployment and image-only updates. There is
+no deployment entrypoint in this application repository. Keep all real deployment
+settings outside Git. Container execution integration is separate from this move.
 
-```powershell
-$env:BOTNEXUS_BUILDTEST_SUBSCRIPTION_ID = '<subscription-id>'
-$env:BOTNEXUS_BUILDTEST_RESOURCE_GROUP = '<resource-group>'
-$env:BOTNEXUS_BUILDTEST_LOCATION = '<azure-region>'
-./infra/buildtest/Deploy-BuildTestInfrastructure.ps1
-```
-
-The script uses the current Azure CLI user as the operator identity and builds the runner image through ACR Tasks. The subscription used for the shared deployment does not permit Basic or Standard ACR, so the template uses Premium. Container Apps compute scales to zero, but the registry has a standing charge.
-
-### Runner image tags are content-addressed
-
-Do not pick a version number for the runner image. The tag is **derived from a SHA-256 over the contents of `infra/buildtest/runner/`** and looks like `src-1bc35f62d232` (#2900). This build/source attribution is distinct from the immutable registry digest and the broader qualified execution-input digest. It does not confer operator approval.
-
-This is a correctness guard, not a convenience. **ACR tags are mutable**: `az acr build` against an existing tag republishes over it with exit 0 and no warning. On 2026-08-09 a hand-picked "next" version destroyed the existing `0.1.12` image, because the default in the deploy script read `0.1.11` while the deployed job was actually running `0.1.15` and `main.bicep` claimed `0.1.4` — three sources of truth, all disagreeing.
-
-Content addressing removes the failure mode rather than documenting it:
-
-- Identical content always yields the same tag, so a redundant deploy is a **skipped no-op** instead of an overwrite.
-- Different content always yields a different tag, so a change can never land on an existing one.
-- There is no number left to drift, and `main.bicep` now requires the parameter instead of defaulting.
-
-Passing `-RunnerImageTag` explicitly is still allowed for pinning a historical image during a rollback, but the script **refuses to publish over a tag that already exists**. Deleting a tag has to be a deliberate, separate act.
-
-Files under `infra/buildtest/runner/tests/` are excluded from the hash — they never enter the image, so editing them must not force a rebuild. `infra/buildtest/tests/DeployTagGuard.Tests.ps1` pins all of these properties and is mutation-verified.
+Tags must not be overwritten. The runner-owned build command uses a source-bound
+unique tag and returns an immutable digest. A tag or successful source move is not
+proof of an approved image, live deployment or successful application execution.
 
 ## Snapshot format
 

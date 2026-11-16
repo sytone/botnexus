@@ -4,7 +4,7 @@ namespace BotNexus.Architecture.Tests;
 
 /// <summary>
 /// The "core" test scope is spelled in three places: the CI pull-request job, the CI push job, and
-/// the remote container runner's entrypoint. They must agree, because a gate that runs a different
+/// the application-owned bounded test command. They must agree, because a gate that runs a different
 /// set from the one it claims is worse than no gate -- it reports confidence it has not earned.
 ///
 /// This is a real risk rather than a hypothetical one. The push job previously carried its own
@@ -19,13 +19,13 @@ public class CoreTestScopeConsistencyTests : ArchitectureTest
 
 
     [Fact]
-    public void CoreScope_IsSpelledIdentically_InCiAndTheRemoteRunner()
+    public void CoreScope_IsSpelledIdentically_InCiAndApplicationCommand()
     {
         var root = Repository.Root;
         var sources = new Dictionary<string, string>
         {
             [".github/workflows/ci-build-test.yml"] = Path.Combine(root, ".github", "workflows", "ci-build-test.yml"),
-            ["infra/buildtest/runner/entrypoint.ps1"] = Path.Combine(root, "infra", "buildtest", "runner", "entrypoint.ps1"),
+            ["scripts/repo/Invoke-BoundedCoreTests.ps1"] = Path.Combine(root, "scripts", "repo", "Invoke-BoundedCoreTests.ps1"),
         };
 
         foreach (var (label, path) in sources)

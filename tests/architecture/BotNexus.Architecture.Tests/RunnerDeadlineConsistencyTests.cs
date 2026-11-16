@@ -33,40 +33,12 @@ public class RunnerDeadlineConsistencyTests : ArchitectureTest
         Assert.Contains("$ReplicaTimeoutMinutes * 60", client, StringComparison.Ordinal);
     }
 
+    // Runtime original-clock/result and Docker COPY assertions moved to the standalone
+    // Test-RunnerDeadlineContract and timeout/diagnostic fixtures with the runtime.
     [Fact]
-    public void RunnerBoundsTheTestPhaseAndRecordsTheTimeoutInTheContract()
+    public void ApplicationReplicaTimeoutDefault_RemainsTwentyMinutes()
     {
-        var entrypoint = Read("infra", "buildtest", "runner", "entrypoint.ps1");
-
-        // The bound must be applied to the test phase. A blocking `& dotnet test | Tee-Object`
-        // pipeline cannot be interrupted, so reverting to one would restore the empty-artifact
-        // outcome while every other part of this change still looked present.
-        Assert.Contains("Invoke-BoundedProcess", entrypoint, StringComparison.Ordinal);
-        Assert.Contains("Get-RunnerDeadlineSeconds", entrypoint, StringComparison.Ordinal);
-
-        // The timeout has to be REPRESENTED in result.json, which is the contract the client
-        // reads. A timeout that only reaches the console leaves the caller inferring an outcome
-        // from an absence, which is the same unobservable-bound shape as #3244.
-        Assert.Contains("timeout = $timeoutRecord", entrypoint, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void RunnerHelperIsShippedIntoTheImage()
-    {
-        var dockerfile = Read("infra", "buildtest", "runner", "Dockerfile");
-
-        // Dot-sourcing a file that was never COPYed fails the entrypoint at line one, which
-        // would take out every mode of the gate rather than just the timeout path.
-        Assert.Contains("RunnerTimeout.ps1", dockerfile, StringComparison.Ordinal);
-    }
-
-    [Fact]
-    public void DeployedReplicaTimeoutMatchesTheClientDefault()
-    {
-        var bicep = Read("infra", "buildtest", "main.bicep");
         var client = Read("scripts", "repo", "Invoke-AzureBuildTest.ps1");
-
-        Assert.Contains("replicaTimeout: 1200", bicep, StringComparison.Ordinal);
         Assert.Contains("[int]$ReplicaTimeoutMinutes = 20", client, StringComparison.Ordinal);
     }
 }
