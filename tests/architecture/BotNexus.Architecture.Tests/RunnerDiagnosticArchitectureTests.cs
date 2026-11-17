@@ -11,8 +11,34 @@ namespace BotNexus.Architecture.Tests;
 /// <summary>Candidate-source contracts run in remote CORE, independently of image helpers.</summary>
 public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
 {
-    // Generic diagnostic fixtures moved with the runtime to botnexus-runner.
-    // Test-RunnerDiagnostic, Deadline, Cleanup and Publication retain those assertions.
+    [Theory]
+    [InlineData("RunnerDiagnostic.Tests.ps1")]
+    [InlineData("RunnerDiagnosticDeadline.Tests.ps1")]
+    [InlineData("RunnerDiagnosticCleanup.Tests.ps1")]
+    [InlineData("RunnerDiagnosticPublication.Tests.ps1")]
+    public async Task Diagnostic_CandidateSourceFixtures_PassWithoutGatewayOrTesthost(string script)
+    {
+        var start = new ProcessStartInfo("pwsh")
+        {
+            WorkingDirectory = Repository.Root,
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        start.ArgumentList.Add("-NoProfile");
+        start.ArgumentList.Add("-File");
+        start.ArgumentList.Add(Repository.Path("infra", "buildtest", "runner", "tests", script));
+        using var process = Process.Start(start);
+        process.ShouldNotBeNull("PowerShell is required; missing harness must fail closed.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(1));
+        try { await process.WaitForExitAsync(deadline.Token); }
+        finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
+        var output = await stdout + await stderr;
+        process.ExitCode.ShouldBe(0, output);
+        output.ShouldContain("failed=0");
+    }
 
     [Fact]
     public void Collector_ActualObjectModelEvents_AreSubscribedAndDurablyRecorded()

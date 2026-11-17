@@ -138,7 +138,7 @@ Two properties are deliberate:
 - **A filtered run never accuses a project it was not going to run.** `core` excludes the browser/E2E projects, so their absence from the results is by design. A confidently wrong attribution is worse than none.
 - **An empty outstanding set is stated, not filled in.** "Every project reported and the phase still overran" is a real and different finding — the overrun is outside test execution — and inventing a culprit would hide it.
 
-The standalone runner timeout tests pins all of this, including the truncated-TRX case and the sensitivity of the derivation to the budget; `RunnerDeadlineConsistencyTests` fails the build if the budget stops being passed through or the bound is removed.
+The application compatibility timeout tests pin all of this, including the truncated-TRX case and the sensitivity of the derivation to the budget; `RunnerDeadlineConsistencyTests` fails the build if the budget stops being passed through or the bound is removed.
 
 **The budget itself was deliberately not raised.** A larger number would hide the defect rather than remove it: the failure mode was "killed, no evidence", not "killed too early". Whether `-Mode full` genuinely needs more than 20 minutes is a separate question, answerable only once a timed-out run produces attribution — which is what this change delivers.
 
@@ -167,7 +167,9 @@ belong to [sytone/botnexus-runner](https://github.com/sytone/botnexus-runner).
 Use that repository's infrastructure guide for registry creation, ACR image
 build/publication, Azure validation, deployment and image-only updates. There is
 no deployment entrypoint in this application repository. Keep all real deployment
-settings outside Git. Container execution integration is separate from this move.
+settings outside Git. Legacy application-facing runtime helpers and their tests remain
+for the current client and CI until a separately validated cutover. Their presence is
+not an image build context or a second infrastructure deployment path.
 
 Tags must not be overwritten. The runner-owned build command uses a source-bound
 unique tag and returns an immutable digest. A tag or successful source move is not
