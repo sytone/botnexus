@@ -12,7 +12,7 @@ namespace BotNexus.Architecture.Tests;
 public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
 {
     [Theory]
-    [InlineData("RunnerDiagnostic.Tests.ps1")]
+    [InlineData("Test-RunnerDiagnostic.ps1")]
     [InlineData("RunnerDiagnosticDeadline.Tests.ps1")]
     [InlineData("RunnerDiagnosticCleanup.Tests.ps1")]
     [InlineData("RunnerDiagnosticPublication.Tests.ps1")]
