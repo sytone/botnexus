@@ -14,8 +14,8 @@ move with the runtime; application build/test and acceptance assertions stay her
 | --- | --- | --- |
 | `infra/buildtest/Deploy-BuildTestInfrastructure.ps1` | `scripts/repo/New-RunnerInfrastructure.ps1` | Standalone |
 | `infra/buildtest/RunnerImageProvenance.ps1` | `infra/buildtest/Import-RunnerImageProvenance.ps1` | Standalone |
-| `infra/buildtest/main.bicep` | `infra/buildtest/main.bicep` | Standalone |
-| `infra/buildtest/network.bicep` | `infra/buildtest/network.bicep` | Standalone |
+| `main.bicep` in the former application infrastructure directory | [standalone main template](https://github.com/sytone/botnexus-runner/blob/refactor/5162-infrastructure/infra/buildtest/main.bicep) | Standalone |
+| `network.bicep` in the former application infrastructure directory | [standalone network template](https://github.com/sytone/botnexus-runner/blob/refactor/5162-infrastructure/infra/buildtest/network.bicep) | Standalone |
 | `infra/buildtest/runner/DiagnosticContainment.cs` | `infra/buildtest/runner/DiagnosticContainment.cs` | Standalone |
 | `infra/buildtest/runner/DiagnosticOwnedCommand.ps1` | `infra/buildtest/runner/Invoke-DiagnosticOwnedCommand.ps1` | Standalone |
 | `infra/buildtest/runner/Dockerfile` | `infra/buildtest/runner/Dockerfile` | Standalone |
