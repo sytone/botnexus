@@ -113,12 +113,81 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     private readonly ConcurrentDictionary<string, SessionQueueState> _sessionQueues =
         new(StringComparer.OrdinalIgnoreCase);
     private int _isQuiescing;
+    private readonly object _recoveryGate = new();
+    private readonly Dictionary<string, int> _outstanding = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, IdleReservation> _idleReservations = new(StringComparer.OrdinalIgnoreCase);
+
+    /// <inheritdoc />
+    public IInboundIdleReservation? TryReserveIdle(InboundMessage identity)
+    {
+        ArgumentNullException.ThrowIfNull(identity);
+        var key = GetQueueKey(identity);
+        lock (_recoveryGate)
+        {
+            if (IsQuiescing || _idleReservations.ContainsKey(key) || _outstanding.GetValueOrDefault(key) != 0)
+                return null;
+            var reservation = new IdleReservation(this, key);
+            _idleReservations.Add(key, reservation);
+            return reservation;
+        }
+    }
+
+    private sealed class IdleReservation(DefaultInboundMessageOrchestrator owner, string key) : IInboundIdleReservation
+    {
+        private bool _posted;
+        private bool _disposed;
+        private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public bool TryPost(InboundMessage message)
+        {
+            ArgumentNullException.ThrowIfNull(message);
+            lock (owner._recoveryGate)
+            {
+                if (_posted || _disposed || owner.IsQuiescing || !message.Sender.IsValid || GetQueueKey(message) != key)
+                    return false;
+                var item = new QueuedInboundMessage(message) { ProcessingGate = _released.Task };
+                if (!owner.TryWriteToLiveQueueCore(key, item)) return false;
+                _posted = true;
+                ObserveAbandonedCompletion(item);
+                return true;
+            }
+        }
+        public void Dispose()
+        {
+            lock (owner._recoveryGate)
+            {
+                if (_disposed) return;
+                _disposed = true;
+                owner._idleReservations.Remove(key);
+                _released.TrySetResult();
+            }
+        }
+    }
+
+    private void AddOutstanding(string key)
+        => _outstanding[key] = _outstanding.GetValueOrDefault(key) + 1;
+
+    private void RemoveOutstanding(string key)
+    {
+        var remaining = _outstanding.GetValueOrDefault(key) - 1;
+        if (remaining <= 0) _outstanding.Remove(key);
+        else _outstanding[key] = remaining;
+    }
 
     /// <inheritdoc />
     public bool IsQuiescing => Volatile.Read(ref _isQuiescing) != 0;
 
     /// <inheritdoc />
-    public bool TryBeginQuiesce() => Interlocked.Exchange(ref _isQuiescing, 1) == 0;
+    public bool TryBeginQuiesce()
+    {
+        lock (_recoveryGate)
+        {
+            if (IsQuiescing) return false;
+            Volatile.Write(ref _isQuiescing, 1);
+            foreach (var reservation in _idleReservations.Values.ToArray())
+                reservation.Dispose();
+            return true;
+        }
+    }
 
     /// <summary>
     /// Creates an orchestrator that uses the supplied processor to handle each
@@ -272,6 +341,23 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     /// </remarks>
     private bool TryWriteToLiveQueue(string queueKey, QueuedInboundMessage queueItem)
     {
+        lock (_recoveryGate)
+        {
+            if (IsQuiescing || _idleReservations.ContainsKey(queueKey)) return false;
+            return TryWriteToLiveQueueCore(queueKey, queueItem);
+        }
+    }
+
+    private bool TryWriteToLiveQueueCore(string queueKey, QueuedInboundMessage queueItem)
+    {
+        AddOutstanding(queueKey);
+        if (TryWriteUntracked(queueKey, queueItem)) return true;
+        RemoveOutstanding(queueKey);
+        return false;
+    }
+
+    private bool TryWriteUntracked(string queueKey, QueuedInboundMessage queueItem)
+    {
         // Two attempts: the first may lose the race against a worker that is exiting right now, the
         // second is written to a state this call created or observed as live.
         for (var attempt = 0; attempt < 2; attempt++)
@@ -323,6 +409,24 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     /// </para>
     /// </remarks>
     private async Task<bool> TrySteerAsync(InboundMessage message, CancellationToken cancellationToken)
+    {
+        var key = GetQueueKey(message);
+        lock (_recoveryGate)
+        {
+            if (IsQuiescing || _idleReservations.ContainsKey(key)) return false;
+            AddOutstanding(key);
+        }
+        try
+        {
+            return await TrySteerCoreAsync(message, cancellationToken).ConfigureAwait(false);
+        }
+        finally
+        {
+            lock (_recoveryGate) RemoveOutstanding(key);
+        }
+    }
+
+    private async Task<bool> TrySteerCoreAsync(InboundMessage message, CancellationToken cancellationToken)
     {
         if (_deliveryResolver is null || _steerDeliverer is null)
         {
@@ -766,6 +870,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 bool shouldCloseQueue = false;
                 try
                 {
+                    await item.ProcessingGate.ConfigureAwait(false);
                     // A producer-owned deadline can expire while this item is still behind another
                     // turn. Its completion is cancelled at that instant so the producer can persist
                     // the terminal state without waiting for the head item to finish. When the queue
@@ -807,6 +912,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                 }
                 finally
                 {
+                    lock (_recoveryGate) RemoveOutstanding(queueKey);
                     item.Dispose();
                     if (shouldCloseQueue && _sessionQueues.TryRemove(queueKey, out var state))
                     {
@@ -828,6 +934,7 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
     /// </summary>
     public async ValueTask DisposeAsync()
     {
+        TryBeginQuiesce();
         foreach (var state in _sessionQueues.Values)
         {
             state.Queue.Writer.TryComplete();
@@ -878,6 +985,8 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
                     this);
             }
         }
+
+        public Task ProcessingGate { get; init; } = Task.CompletedTask;
 
         public InboundMessage Message { get; }
 

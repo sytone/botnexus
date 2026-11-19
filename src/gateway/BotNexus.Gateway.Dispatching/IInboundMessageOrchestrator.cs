@@ -27,6 +27,10 @@ namespace BotNexus.Gateway.Dispatching;
 /// </remarks>
 public interface IInboundMessageOrchestrator
 {
+    /// <summary>Reserves an empty non-processing queue without changing its messages. Null means
+    /// busy or unsupported. This alone proves neither agent nor owned-command termination.</summary>
+    IInboundIdleReservation? TryReserveIdle(InboundMessage identity) => null;
+
     /// <summary>
     /// Enqueue an inbound message for processing on its per-session queue and
     /// await completion. Returns an aggregate result describing whether the

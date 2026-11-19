@@ -46,6 +46,11 @@ public interface IAgentHandle : IAsyncDisposable
     /// <summary>Whether the agent is currently processing a request.</summary>
     bool IsRunning { get; }
 
+    /// <summary>Content-free current recovery status for tracked command tools and pending input.
+    /// Values other than safe refuse recovery. Unsupported implementations return unknown. This
+    /// does not stop work or replace the required supervisor and inbound admission reservations.</summary>
+    string RecoverySafety => "unknown";
+
     /// <summary>
     /// Sends a message to the agent and waits for the complete response.
     /// Use <see cref="StreamAsync(string,CancellationToken)"/> for real-time streaming.

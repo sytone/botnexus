@@ -52,7 +52,7 @@ public sealed class Agent
     {
         lock (_lifecycleLock)
         {
-            if (_admissionClosed || _status != AgentStatus.Idle || _maintenance is not null)
+            if (_admissionClosed || _status != AgentStatus.Idle || _maintenance is not null || HasQueuedMessages)
                 return null;
             _maintenance = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             return new MaintenanceReservation(this, _maintenance);
@@ -447,7 +447,12 @@ public sealed class Agent
     public void Steer(AgentMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        _steeringQueue.Enqueue(message);
+        lock (_lifecycleLock)
+        {
+            if (_admissionClosed || _maintenance is not null)
+                throw new InvalidOperationException("Agent admission is reserved or closed.");
+            _steeringQueue.Enqueue(message);
+        }
     }
 
     /// <summary>
@@ -461,7 +466,12 @@ public sealed class Agent
     public void FollowUp(AgentMessage message)
     {
         ArgumentNullException.ThrowIfNull(message);
-        _followUpQueue.Enqueue(message);
+        lock (_lifecycleLock)
+        {
+            if (_admissionClosed || _maintenance is not null)
+                throw new InvalidOperationException("Agent admission is reserved or closed.");
+            _followUpQueue.Enqueue(message);
+        }
     }
 
     /// <summary>

@@ -1397,6 +1397,22 @@ internal sealed class InProcessAgentHandle : IAgentHandle, IHealthCheckable, IAg
     public IDisposable? TryReserveMaintenance() => _agent.TryReserveMaintenance();
 
     /// <inheritdoc />
+    public string RecoverySafety
+    {
+        get
+        {
+            if (_agent.Status != BotNexus.Agent.Core.Types.AgentStatus.Idle) return "busy";
+            if (_agent.HasQueuedMessages) return "queued";
+            foreach (var tool in _toolsByName.Values.Where(tool => tool.Name is "exec" or "bash" or "shell"))
+            {
+                if (tool is not BotNexus.Agent.Core.Tools.ICommandRecoveryState state) return "unknown";
+                if (state.RecoverySafety != "safe") return state.RecoverySafety;
+            }
+            return "safe";
+        }
+    }
+
+    /// <inheritdoc />
     public IAgentHandle? GetHandle(AgentId agentId, SessionId sessionId)
         => string.Equals(AgentId.Value, agentId.Value, StringComparison.OrdinalIgnoreCase) &&
            string.Equals(SessionId.Value, sessionId.Value, StringComparison.OrdinalIgnoreCase)

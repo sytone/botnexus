@@ -15,7 +15,7 @@ namespace BotNexus.Extensions.ExecTool;
 /// Enhanced shell execution tool with configurable timeouts, background mode,
 /// no-output timeout, stdin piping, environment merging, and Windows .cmd/.bat resolution.
 /// </summary>
-public sealed class ExecTool : IAgentTool
+public sealed class ExecTool : IAgentTool, ICommandRecoveryState
 {
     private const int DefaultTimeoutMs = 120_000;
     private const int MaxOutputBytes = OutputRetentionPolicy.MaxOutputBytes;
@@ -33,6 +33,19 @@ public sealed class ExecTool : IAgentTool
     private readonly string _processOwner;
     private readonly BackgroundProcessRegistry _processRegistry;
     private readonly Func<BackgroundProcess, Task>? _beforeBackgroundRegister;
+    private int _recoveryUncertain;
+
+    /// <inheritdoc />
+    public string RecoverySafety
+    {
+        get
+        {
+            if (Volatile.Read(ref _recoveryUncertain) != 0) return "commands-unresolved";
+            var owned = _processRegistry.List(_processOwner);
+            if (owned.Any(process => process.KillUnconfirmed)) return "commands-unresolved";
+            return owned.Any(process => !process.IsComplete) ? "commands-running" : "safe";
+        }
+    }
 
     /// <summary>
     /// Creates the tool bound to an agent workspace. <paramref name="workingDirectory"/> deliberately
@@ -302,6 +315,7 @@ public sealed class ExecTool : IAgentTool
 
         var process = new Process { StartInfo = startInfo };
         var transferred = false;
+        Interlocked.Increment(ref _recoveryUncertain);
         try
         {
 
@@ -363,6 +377,7 @@ public sealed class ExecTool : IAgentTool
                 throw;
             }
 
+            Interlocked.Decrement(ref _recoveryUncertain);
             var result = JsonSerializer.Serialize(new { pid, status = "running" });
             return new AgentToolResult(
                 [new AgentToolContent(AgentToolContentType.Text, result)],
@@ -427,6 +442,7 @@ public sealed class ExecTool : IAgentTool
             {
                 await process.WaitForExitAsync(tokens.Token).ConfigureAwait(false);
                 termination = "exit";
+                Interlocked.Decrement(ref _recoveryUncertain);
             }
             catch (OperationCanceledException)
             {

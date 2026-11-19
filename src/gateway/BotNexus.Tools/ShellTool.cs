@@ -51,7 +51,7 @@ public enum ShellPreference
 /// mirroring the configurable-max pattern used by FileWatcherTool and DelayTool.
 /// </para>
 /// </remarks>
-public sealed class ShellTool : IAgentTool
+public sealed class ShellTool : IAgentTool, ICommandRecoveryState
 {
     private const int MaxOutputBytes = 50 * 1024;
     private const int MaxOutputLines = 2000;
@@ -70,6 +70,10 @@ public sealed class ShellTool : IAgentTool
     private readonly int _maxTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
+    private int _recoveryUncertain;
+
+    /// <inheritdoc />
+    public string RecoverySafety => Volatile.Read(ref _recoveryUncertain) == 0 ? "safe" : "commands-unresolved";
 
     // Per-instance diagnostic seams order timer arm, child readiness, and exit observation.
     // Defaults preserve the existing execution ordering and system clock.
@@ -292,6 +296,7 @@ public sealed class ShellTool : IAgentTool
 
         LocalChildEnvironment.Apply(startInfo, _environmentPolicy);
         using var process = new Process { StartInfo = startInfo };
+        Interlocked.Increment(ref _recoveryUncertain);
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start shell process.");
@@ -387,6 +392,9 @@ public sealed class ShellTool : IAgentTool
             output = $"{output}{Environment.NewLine}{Environment.NewLine}[command exited with code {process.ExitCode}]";
         }
 
+        // Only ordinary confirmed exit clears this invocation's uncertainty. Timeout,
+        // cancellation and exception paths retain it; a later command cannot clear older doubt.
+        Interlocked.Decrement(ref _recoveryUncertain);
         return new AgentToolResult(
             [new AgentToolContent(AgentToolContentType.Text, output)],
             new ShellToolDetails(process.ExitCode, TimedOut: false, IsError: process.ExitCode != 0));
