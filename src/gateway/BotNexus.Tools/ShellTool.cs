@@ -70,10 +70,10 @@ public sealed class ShellTool : IAgentTool, ICommandRecoveryState
     private readonly int _maxTimeoutSeconds;
     private readonly ShellPreference _shellPreference;
     private readonly string[]? _shellCommand;
-    private int _recoveryUncertain;
+    private string RecoveryOwner => "shell-workspace:" + (_workingDirectory ?? "unscoped");
 
     /// <inheritdoc />
-    public string RecoverySafety => Volatile.Read(ref _recoveryUncertain) == 0 ? "safe" : "commands-unresolved";
+    public string RecoverySafety => CommandRecoveryLedger.GetStatus(RecoveryOwner);
 
     // Per-instance diagnostic seams order timer arm, child readiness, and exit observation.
     // Defaults preserve the existing execution ordering and system clock.
@@ -296,7 +296,7 @@ public sealed class ShellTool : IAgentTool, ICommandRecoveryState
 
         LocalChildEnvironment.Apply(startInfo, _environmentPolicy);
         using var process = new Process { StartInfo = startInfo };
-        Interlocked.Increment(ref _recoveryUncertain);
+        var recovery = CommandRecoveryLedger.Begin(RecoveryOwner);
         if (!process.Start())
         {
             throw new InvalidOperationException("Failed to start shell process.");
@@ -394,7 +394,7 @@ public sealed class ShellTool : IAgentTool, ICommandRecoveryState
 
         // Only ordinary confirmed exit clears this invocation's uncertainty. Timeout,
         // cancellation and exception paths retain it; a later command cannot clear older doubt.
-        Interlocked.Decrement(ref _recoveryUncertain);
+        recovery.ConfirmCompleted();
         return new AgentToolResult(
             [new AgentToolContent(AgentToolContentType.Text, output)],
             new ShellToolDetails(process.ExitCode, TimedOut: false, IsError: process.ExitCode != 0));

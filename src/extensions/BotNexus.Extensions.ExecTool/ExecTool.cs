@@ -33,14 +33,14 @@ public sealed class ExecTool : IAgentTool, ICommandRecoveryState
     private readonly string _processOwner;
     private readonly BackgroundProcessRegistry _processRegistry;
     private readonly Func<BackgroundProcess, Task>? _beforeBackgroundRegister;
-    private int _recoveryUncertain;
+    private string RecoveryOwner => "exec-agent:" + (_processOwner.Length == 0 ? "unscoped" : _processOwner);
 
     /// <inheritdoc />
     public string RecoverySafety
     {
         get
         {
-            if (Volatile.Read(ref _recoveryUncertain) != 0) return "commands-unresolved";
+            if (CommandRecoveryLedger.GetStatus(RecoveryOwner) != "safe") return "commands-unresolved";
             var owned = _processRegistry.List(_processOwner);
             if (owned.Any(process => process.KillUnconfirmed)) return "commands-unresolved";
             return owned.Any(process => !process.IsComplete) ? "commands-running" : "safe";
@@ -315,7 +315,7 @@ public sealed class ExecTool : IAgentTool, ICommandRecoveryState
 
         var process = new Process { StartInfo = startInfo };
         var transferred = false;
-        Interlocked.Increment(ref _recoveryUncertain);
+        var recovery = CommandRecoveryLedger.Begin(RecoveryOwner);
         try
         {
 
@@ -377,7 +377,9 @@ public sealed class ExecTool : IAgentTool, ICommandRecoveryState
                 throw;
             }
 
-            Interlocked.Decrement(ref _recoveryUncertain);
+            // Keep the shared ticket pending until the owned wrapper confirms completion.
+            // Registry retention/reaping must not erase unresolved command evidence.
+            _ = ConfirmBackgroundRecoveryAsync(managed, recovery);
             var result = JsonSerializer.Serialize(new { pid, status = "running" });
             return new AgentToolResult(
                 [new AgentToolContent(AgentToolContentType.Text, result)],
@@ -442,7 +444,7 @@ public sealed class ExecTool : IAgentTool, ICommandRecoveryState
             {
                 await process.WaitForExitAsync(tokens.Token).ConfigureAwait(false);
                 termination = "exit";
-                Interlocked.Decrement(ref _recoveryUncertain);
+                recovery.ConfirmCompleted();
             }
             catch (OperationCanceledException)
             {
@@ -502,6 +504,20 @@ public sealed class ExecTool : IAgentTool, ICommandRecoveryState
         finally
         {
             if (!transferred) process.Dispose();
+        }
+    }
+
+    private static async Task ConfirmBackgroundRecoveryAsync(BackgroundProcess managed,
+        CommandRecoveryLedger.CommandRecoveryTicket recovery)
+    {
+        try
+        {
+            await managed.WaitForCompletionAsync().ConfigureAwait(false);
+            if (managed.IsComplete) recovery.ConfirmCompleted();
+        }
+        catch
+        {
+            // Unknown completion remains fenced; this observer never retries or kills a process.
         }
     }
 
