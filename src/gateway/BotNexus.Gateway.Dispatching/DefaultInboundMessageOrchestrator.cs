@@ -137,16 +137,24 @@ public sealed class DefaultInboundMessageOrchestrator : IInboundMessageOrchestra
         private bool _posted;
         private bool _disposed;
         private readonly TaskCompletionSource _released = new(TaskCreationOptions.RunContinuationsAsynchronously);
-        public bool TryPost(InboundMessage message)
+        public Task<InboundDispatchResult>? Completion { get; private set; }
+        public bool TryPost(InboundMessage message) => TryPostCore(message, null);
+        public bool TryPost(InboundMessage message, InboundExecutionControl executionControl)
+        {
+            ArgumentNullException.ThrowIfNull(executionControl);
+            return TryPostCore(message, executionControl);
+        }
+        private bool TryPostCore(InboundMessage message, InboundExecutionControl? executionControl)
         {
             ArgumentNullException.ThrowIfNull(message);
             lock (owner._recoveryGate)
             {
                 if (_posted || _disposed || owner.IsQuiescing || !message.Sender.IsValid || GetQueueKey(message) != key)
                     return false;
-                var item = new QueuedInboundMessage(message) { ProcessingGate = _released.Task };
+                var item = new QueuedInboundMessage(message, executionControl) { ProcessingGate = _released.Task };
                 if (!owner.TryWriteToLiveQueueCore(key, item)) return false;
                 _posted = true;
+                Completion = item.Completion.Task;
                 ObserveAbandonedCompletion(item);
                 return true;
             }

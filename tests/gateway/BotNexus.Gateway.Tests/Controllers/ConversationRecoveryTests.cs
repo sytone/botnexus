@@ -1,3 +1,4 @@
+using System.Text.Json;
 using BotNexus.Domain.Primitives;
 using BotNexus.Domain.World;
 using BotNexus.Gateway.Abstractions.Agents;
@@ -24,6 +25,8 @@ public sealed class ConversationRecoveryTests
     private readonly AgentId _agent = AgentId.From("worker");
     private readonly ConversationId _conversation = ConversationId.From("c-recovery");
     private readonly SessionId _session = SessionId.From("s-recovery");
+    private InboundExecutionControl? _control;
+    private readonly TaskCompletionSource<InboundDispatchResult> _completion = new(TaskCreationOptions.RunContinuationsAsynchronously);
 
     private async Task<ConversationRecoveryController> CreateAsync(bool pendingPrompt = false)
     {
@@ -41,7 +44,12 @@ public sealed class ConversationRecoveryTests
         _supervisor.TryReserveMaintenance(_handle).Returns(_runtime);
         _handle.RecoverySafety.Returns("safe");
         _queue.TryReserveIdle(Arg.Any<InboundMessage>()).Returns(_reservation);
-        _reservation.TryPost(Arg.Any<InboundMessage>()).Returns(true);
+        _reservation.TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>()).Returns(call =>
+        {
+            _control = call.Arg<InboundExecutionControl>();
+            return true;
+        });
+        _reservation.Completion.Returns(_completion.Task);
         return new ConversationRecoveryController(_conversations, _sessions, _supervisor, _queue);
     }
 
@@ -53,7 +61,7 @@ public sealed class ConversationRecoveryTests
             new ConversationResumeRequest("s-recovery", "recover-once", "Inspect saved output and finish the assigned stage.", 0), CancellationToken.None);
         result.ShouldBeOfType<AcceptedResult>();
         _reservation.Received(1).TryPost(Arg.Is<InboundMessage>(m => m.RoutingHints != null &&
-            m.RoutingHints.RequestedSessionId == _session && m.RoutingHints.RequestedConversationId == _conversation));
+            m.RoutingHints.RequestedSessionId == _session && m.RoutingHints.RequestedConversationId == _conversation), Arg.Any<InboundExecutionControl>());
         (await _conversations.GetAsync(_conversation)).ShouldNotBeNull().ActiveSessionId.ShouldBe(_session);
         _runtime.Received(1).Dispose();
     }
@@ -71,7 +79,61 @@ public sealed class ConversationRecoveryTests
         await _sessions.SaveAsync(session);
         (await controller.Resume("worker", "c-recovery", new("s-recovery", "original", "Continue", 1), CancellationToken.None))
             .ShouldBeOfType<ConflictObjectResult>();
-        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>());
+        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>());
+    }
+
+    [Fact]
+    public async Task Resume_MalformedExactReceipt_CannotBeOverwrittenOrReplayed()
+    {
+        var controller = await CreateAsync();
+        var key = "conversationRecoveryOperation:" + Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("corrupt-op")));
+        var session = (await _sessions.GetAsync(_session)).ShouldNotBeNull();
+        session.Metadata[key] = "malformed receipt";
+        await _sessions.SaveAsync(session);
+        (await controller.Resume("worker", "c-recovery", new("s-recovery", "corrupt-op", "Continue", 0), CancellationToken.None))
+            .ShouldBeOfType<ConflictObjectResult>();
+        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>());
+        (await _sessions.GetAsync(_session)).ShouldNotBeNull().Metadata[key].ShouldBe("malformed receipt");
+    }
+
+    [Fact]
+    public async Task Resume_ActualStartPersistsStartedReceipt()
+    {
+        var controller = await CreateAsync();
+        (await controller.Resume("worker", "c-recovery", new("s-recovery", "op-start", "Continue", 0), CancellationToken.None))
+            .ShouldBeOfType<AcceptedResult>();
+        await _control.ShouldNotBeNull().NotifyStartedAsync();
+        var status = await controller.Status("worker", "c-recovery", "s-recovery", "op-start", CancellationToken.None);
+        var receipt = JsonSerializer.SerializeToElement(status.ShouldBeOfType<OkObjectResult>().Value, JsonSerializerOptions.Web);
+        receipt.GetProperty("status").GetString().ShouldBe("processing-started");
+        receipt.GetProperty("startedAt").ValueKind.ShouldBe(JsonValueKind.String);
+    }
+
+    [Fact]
+    public async Task Resume_StatusTracksExactOperation_AndStartRefusesReboundSession()
+    {
+        var controller = await CreateAsync();
+        (await controller.Resume("worker", "c-recovery", new("s-recovery", "op-rebind", "Continue", 0), CancellationToken.None))
+            .ShouldBeOfType<AcceptedResult>();
+        var status = await controller.Status("worker", "c-recovery", "s-recovery", "op-rebind", CancellationToken.None);
+        var receipt = JsonSerializer.SerializeToElement(status.ShouldBeOfType<OkObjectResult>().Value, JsonSerializerOptions.Web);
+        receipt.GetProperty("status").GetString().ShouldBe("admitted");
+        var conversation = (await _conversations.GetAsync(_conversation)).ShouldNotBeNull();
+        conversation.ActiveSessionId = SessionId.From("s-rebound");
+        await _conversations.SaveAsync(conversation);
+        await Should.ThrowAsync<InvalidOperationException>(() => _control.ShouldNotBeNull().NotifyStartedAsync());
+    }
+
+    [Fact]
+    public async Task Resume_ExactOperationReplay_DoesNotPostAgainEvenAfterCompletedRecord()
+    {
+        var controller = await CreateAsync();
+        var request = new ConversationResumeRequest("s-recovery", "op-once", "Continue", 0);
+        (await controller.Resume("worker", "c-recovery", request, CancellationToken.None)).ShouldBeOfType<AcceptedResult>();
+        (await controller.Resume("worker", "c-recovery", request, CancellationToken.None)).ShouldBeOfType<OkObjectResult>();
+        _reservation.Received(1).TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>());
+        (await controller.Resume("worker", "c-recovery", request with { Message = "Changed input" }, CancellationToken.None))
+            .ShouldBeOfType<ConflictObjectResult>();
     }
 
     [Theory]
@@ -85,7 +147,7 @@ public sealed class ConversationRecoveryTests
         _handle.RecoverySafety.Returns(safety);
         var result = await controller.Resume("worker", "c-recovery", new("s-recovery", "op-unsafe", "Continue", 0), CancellationToken.None);
         result.ShouldBeOfType<ConflictObjectResult>();
-        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>());
+        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>());
     }
 
     [Fact]
@@ -95,7 +157,7 @@ public sealed class ConversationRecoveryTests
         _supervisor.TryReserveMaintenance(_handle).Returns((IDisposable?)null);
         (await controller.Resume("worker", "c-recovery", new("s-recovery", "op-live", "Continue", 0), CancellationToken.None))
             .ShouldBeOfType<ConflictObjectResult>();
-        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>());
+        _reservation.DidNotReceive().TryPost(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>());
     }
 
     [Fact]

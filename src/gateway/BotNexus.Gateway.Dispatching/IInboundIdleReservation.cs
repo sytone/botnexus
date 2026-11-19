@@ -9,4 +9,11 @@ public interface IInboundIdleReservation : IDisposable
 {
     /// <summary>Enqueues at most one same-key message; returns false after disposal or prior success.</summary>
     bool TryPost(InboundMessage message);
+
+    /// <summary>Enqueues one producer-owned message. Unsupported reservations refuse without sending.</summary>
+    bool TryPost(InboundMessage message, InboundExecutionControl executionControl) => false;
+
+    /// <summary>Actual processor completion for the owned post, or null before admission/when unsupported.
+    /// A returned task is not evidence that processing started or finished until observed.</summary>
+    Task<InboundDispatchResult>? Completion => null;
 }

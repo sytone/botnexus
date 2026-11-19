@@ -39,6 +39,44 @@ public sealed class InboundRecoveryReservationTests
     }
 
     [Fact]
+    public async Task OwnedPost_ExposesActualCompletion_AndUsesProducerStartContract()
+    {
+        var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var processor = Substitute.For<IInboundMessageProcessor>();
+        processor.ProcessAsync(Arg.Any<InboundMessage>(), Arg.Any<InboundExecutionControl>())
+            .Returns(async call =>
+            {
+                await call.Arg<InboundExecutionControl>().NotifyStartedAsync();
+                await release.Task;
+                return new InboundProcessingOutcome([], false);
+            });
+        await using var queue = new DefaultInboundMessageOrchestrator(processor,
+            NullLogger<DefaultInboundMessageOrchestrator>.Instance);
+        using var reservation = queue.TryReserveIdle(Message("c-receipt"));
+        reservation.ShouldNotBeNull();
+        var control = new InboundExecutionControl(CancellationToken.None, () =>
+        {
+            started.TrySetResult();
+            return Task.CompletedTask;
+        });
+        reservation.TryPost(Message("c-receipt"), control).ShouldBeTrue();
+        var completion = reservation.Completion.ShouldNotBeNull();
+        completion.IsCompleted.ShouldBeFalse();
+        reservation.Dispose();
+        try
+        {
+            await started.Task.WaitAsync(TimeSpan.FromSeconds(30));
+            completion.IsCompleted.ShouldBeFalse();
+        }
+        finally
+        {
+            release.TrySetResult();
+        }
+        (await completion.WaitAsync(TimeSpan.FromSeconds(30))).Status.ShouldBe(InboundDispatchStatus.NoRoute);
+    }
+
+    [Fact]
     public async Task Quiesce_RevokesHeldReservation_AndPreventsPostOrNewReservation()
     {
         var processor = Substitute.For<IInboundMessageProcessor>();
