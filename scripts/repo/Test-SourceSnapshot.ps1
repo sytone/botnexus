@@ -113,25 +113,30 @@ BeforeAll {
         }
         [IO.Directory]::CreateDirectory($context.payloadRoot) | Out-Null
         $senderSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'))
-        $runner = [IO.File]::ReadAllText((Join-Path $taskRoot 'infra/buildtest/runner/entrypoint.ps1'))
-        if ($senderSource.Contains('# BEGIN EXACT SOURCE CAPTURE')) {
-            Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
-            Invoke-SourceFragment -Source ([regex]::Match($senderSource, '(?s)# BEGIN EXACT SOURCE CAPTURE(.*?)# END EXACT SOURCE CAPTURE').Groups[1].Value) -Context $context
-            Invoke-SourceFragment -Source ([regex]::Match($runner, '(?s)# BEGIN EXACT SOURCE RESTORE(.*?)# END EXACT SOURCE RESTORE').Groups[1].Value) -Context $context
+        Import-Module (Join-Path $PSScriptRoot 'SourceSnapshot.psm1') -Force
+        $capture = [regex]::Match($senderSource, '(?s)# BEGIN EXACT SOURCE CAPTURE(.*?)# END EXACT SOURCE CAPTURE').Groups[1].Value
+        if ([string]::IsNullOrWhiteSpace($capture)) {
+            throw 'Production source capture block not found.'
         }
-        else {
-            # Execute CURRENT production packaging and extraction, not a mock of the defect.
-            $capture = [regex]::Match($senderSource, '(?s)    & git -C \$repoRoot bundle create.*?(?=    \$sourceBlob =)').Value
-            if (-not $capture) {
-                throw 'Production capture block not found'
+        Invoke-SourceFragment -Source $capture -Context $context
+        # Verify the application payload format before using the shared restore API.
+        $stream = [IO.File]::OpenRead($context.payloadArchive)
+        $gzip = [IO.Compression.GZipStream]::new($stream, [IO.Compression.CompressionMode]::Decompress)
+        $tar = [System.Formats.Tar.TarReader]::new($gzip)
+        $names = [Collections.Generic.List[string]]::new()
+        try {
+            while ($null -ne ($entry = $tar.GetNextEntry())) {
+                $entry.EntryType | Should -BeIn @([System.Formats.Tar.TarEntryType]::RegularFile, [System.Formats.Tar.TarEntryType]::V7RegularFile)
+                $names.Add($entry.Name)
             }
-            Invoke-SourceFragment -Source $capture -Context $context
-            $restore = [regex]::Match($runner, '(?s)    tar -xzf \$payloadArchive.*?(?=    # The packed payload)').Value
-            if (-not $restore) {
-                throw 'Production restore block not found'
-            }
-            Invoke-SourceFragment -Source $restore -Context $context
         }
+        finally {
+            $tar.Dispose(); $gzip.Dispose(); $stream.Dispose()
+        }
+        @($names | Sort-Object) | Should -Be @('SourceSnapshot.psm1', 'repository.bundle', 'source-manifest.json', 'workspace.zip' | Sort-Object)
+        Invoke-GitFixture -Arguments @('clone', '--no-checkout', $context.bundlePath, $context.sourceRoot) | Out-Null
+        $manifest = Get-Content -LiteralPath (Join-Path $Area 'source-manifest.json') -Raw | ConvertFrom-Json
+        Restore-SourceSnapshot -Root $context.sourceRoot -Archive (Join-Path $Area 'workspace.zip') -Manifest $manifest -RunId $context.runId | Out-Null
         $context.sourceRoot
     }
 }
@@ -286,11 +291,34 @@ Describe 'Production source transport regression' {
         $Mode = 'core'
         $status = [pscustomobject]@{ properties = [pscustomobject]@{ status = 'Succeeded'; startTime = '2026-10-28T01:00:00Z'; endTime = '2026-10-28T01:10:00Z' } }
         $fingerprintScript = Join-Path $PSScriptRoot 'Get-WorktreeValidationFingerprint.ps1'
+        $policyPath = Join-Path $repo 'scripts/repo/FixturePolicy.ps1'
+        [void][IO.Directory]::CreateDirectory((Split-Path -Parent $policyPath))
+        [IO.File]::WriteAllText($policyPath, '# synthetic policy')
         $fingerprint = & $fingerprintScript -WorktreePath $repo -BaseRef HEAD
         $recoveryContext = [pscustomobject]@{version = 1; runId = $runId; mode = $Mode; executionName = $executionName; jobUrl = 'https://management.azure.com/subscriptions/fixture/resourceGroups/fixture/providers/Microsoft.App/jobs/fixture'; subscriptionId = 'fixture'; resourceGroup = 'fixture'; jobName = 'fixture'; expectedPreviousReceipt = 'absent'; fingerprint = $fingerprint }
         $status | Add-Member name $executionName
         $status | Add-Member id "/subscriptions/fixture/resourceGroups/fixture/providers/Microsoft.App/jobs/fixture/executions/$executionName"
         $status.properties | Add-Member template ([pscustomobject]@{containers = @([pscustomobject]@{env = @([pscustomobject]@{name = 'RUN_ID'; value = $runId }, [pscustomobject]@{name = 'TEST_MODE'; value = $Mode }, [pscustomobject]@{name = 'BASE_REF'; value = 'HEAD' }) }) })
+        Import-Module (Join-Path $PSScriptRoot 'RunnerReleaseCompatibility.psm1') -Force
+        $relative = 'scripts/repo/FixturePolicy.ps1'
+        $content = '# synthetic policy'
+        $material = "botnexus-qualified-execution-inputs-v1`0" + ('{0}:{1}{2}:{3}' -f [Text.Encoding]::UTF8.GetByteCount($relative), $relative, [Text.Encoding]::UTF8.GetByteCount($content), $content)
+        $image = 'fixture.invalid/runner@sha256:' + ('b' * 64)
+        $approvalPath = Join-Path $area 'synthetic-external-approval.json'
+        [ordered]@{
+            schemaVersion = 1; releaseId = 'synthetic-source-test'; image = $image; approved = $true; revoked = $false
+            runnerInputDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($material))).ToLowerInvariant()
+            modes = @('core'); payloadVersion = 1; evidenceVersion = 1; capabilities = @('exact-source-v1')
+        } | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $approvalPath -Encoding utf8NoBOM
+        $oldSelector = $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST
+        $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST = $approvalPath
+        $binding = Assert-RunnerReleaseCompatibility -ManifestPath $approvalPath -CandidateRoot $repo -DeployedImage $image -Mode core
+        $recoveryContext.version = 2
+        $recoveryContext | Add-Member -NotePropertyName runnerRelease -NotePropertyValue $binding
+        $recoveryContext | Add-Member -NotePropertyName executionConfiguration -NotePropertyValue 'image-entrypoint-v1'
+        $status.properties.template.containers[0] | Add-Member -NotePropertyName image -NotePropertyValue $image
+        $contextPath = Join-Path $area 'synthetic-context.json'
+        $recoveryContext | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $contextPath -Encoding utf8NoBOM
         $result = [pscustomobject]@{completedUtc = [DateTime]::UtcNow.ToString('o'); runId = $runId; mode = $Mode; exitCode = 0; tests = [pscustomobject]@{total = 12000; executed = 12000; passed = 12000; failed = 0; skipped = 0; fixtureFailures = 0; isComplete = $true; failureReason = $null } }
         $guardContext = @{
             Mode = $Mode
@@ -303,6 +331,7 @@ Describe 'Production source transport regression' {
             repoRoot = $repo
             BaseRef = 'HEAD'
             recoveryContext = $recoveryContext
+            contextPath = $contextPath
             OutputPath = $area
         }
         { Invoke-SourceFragment -Source $guard -Context $guardContext } | Should -Throw '*operator*'
@@ -325,11 +354,17 @@ Describe 'Production source transport regression' {
         [IO.File]::WriteAllText((Join-Path $repo 'keep.md'), 'changed after remote run')
         { Invoke-SourceFragment -Source $guard -Context $guardContext } | Should -Throw '*changed before receipt*'
         Test-Path -LiteralPath (Join-Path $repo '.git/botnexus-validation/azure-buildtest.json') | Should -BeFalse
+        if ($null -eq $oldSelector) {
+            Remove-Item Env:BOTNEXUS_RUNNER_RELEASE_MANIFEST -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:BOTNEXUS_RUNNER_RELEASE_MANIFEST = $oldSelector
+        }
     }
-    It 'requires every runner mode to produce a test contract' {
-        $runner = [IO.File]::ReadAllText((Join-Path $taskRoot 'infra/buildtest/runner/entrypoint.ps1'))
-        $runner | Should -Not -Match 'if \(\$strictResults\)'
-        $runner | Should -Match 'sourceSnapshot = \$sourceSnapshot'
+    It 'requires source proof and complete results at the application acceptance boundary' {
+        $applicationSender = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Invoke-AzureBuildTest.ps1'))
+        $applicationSender | Should -Match 'Assert-SourceSnapshotResult'
+        $applicationSender | Should -Match 'Assert-RunnerReleaseBinding'
     }
     It 'rejects archive traversal, link entries and missing files before replacing existing contents' {
         $manifest = Get-SourceSnapshotManifest -RepoRoot $repo

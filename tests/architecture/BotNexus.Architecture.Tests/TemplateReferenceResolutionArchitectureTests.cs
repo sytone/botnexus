@@ -50,7 +50,7 @@ public sealed class TemplateReferenceResolutionArchitectureTests : ArchitectureT
         RegexOptions.Compiled);
 
     // Any repo-relative-looking .bicep / .bicepparam path mentioned in prose or
-    // script, e.g. `infra/buildtest/network.bicep`. A bare filename with no
+    // script, e.g. `infra/template-reference-fixtures/main.bicep`. A bare filename with no
     // directory segment (`main.bicep`) is NOT matched: it is ambiguous prose,
     // not a path assertion.
     private static readonly Regex QualifiedTemplatePath = new(
@@ -119,7 +119,8 @@ public sealed class TemplateReferenceResolutionArchitectureTests : ArchitectureT
     /// Non-vacuity guard: a broken enumeration (wrong repo root, git failure,
     /// over-narrow extension filter) would make the fence above pass by
     /// inspecting nothing. Assert the sweep sees a realistic corpus and that
-    /// the reference extractor actually finds the known real references.
+    /// the reference extractor finds the current application-owned inert fixture. This fixture
+    /// replaces the extracted production templates; it is not the historical #3139 file.
     /// </summary>
     [Fact]
     public void Sweep_InspectsANonTrivialCorpusAndFindsKnownReferences()
@@ -142,12 +143,10 @@ public sealed class TemplateReferenceResolutionArchitectureTests : ArchitectureT
             .ToList();
 
         references.ShouldContain(
-            r => r.EndsWith("infra/buildtest/network.bicep", StringComparison.OrdinalIgnoreCase),
-            "The extractor must find the network.bicep reference in README-migration.md — " +
-            "that is the exact reference #3139 was about.");
-        references.ShouldContain(
-            r => r.EndsWith("infra/buildtest/main.bicep", StringComparison.OrdinalIgnoreCase),
-            "The extractor must find the main.bicep reference in README-migration.md.");
+            r => r.EndsWith("infra/template-reference-fixtures/main.bicep", StringComparison.OrdinalIgnoreCase),
+            "The extractor must find the real application-owned template reference.");
+        ExtractReferences("--template-file infra/template-reference-fixtures/main.bicep")
+            .ShouldContain("infra/template-reference-fixtures/main.bicep");
     }
 
     /// <summary>
@@ -163,11 +162,11 @@ public sealed class TemplateReferenceResolutionArchitectureTests : ArchitectureT
             .Select(p => p.Replace('\\', '/'))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-        const string source = "infra/buildtest/README-migration.md";
+        const string source = "infra/template-reference-fixtures/README.md";
 
-        Resolves("infra/buildtest/network.bicep", source, tracked).ShouldBeTrue(
-            "network.bicep is tracked on this branch; the resolver must accept it.");
-        Resolves("infra/buildtest/does-not-exist.bicep", source, tracked).ShouldBeFalse(
+        Resolves("infra/template-reference-fixtures/main.bicep", source, tracked).ShouldBeTrue(
+            "The current application-owned main.bicep fixture is tracked; the resolver must accept it.");
+        Resolves("infra/template-reference-fixtures/does-not-exist.bicep", source, tracked).ShouldBeFalse(
             "A dangling template reference must be rejected — this is the whole point of the fence.");
     }
 

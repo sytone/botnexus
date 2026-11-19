@@ -267,22 +267,10 @@ if ($localRunnerSource -notmatch "botnexus-local-validation-global" -or
 
 $azureRunnerSource = Get-Content (Join-Path $repoRoot 'scripts/repo/Invoke-AzureBuildTest.ps1') -Raw
 
-# The reported timeout budget must equal the DEPLOYED replicaTimeout, or the breach warning
-# reassures against a number nobody is enforcing. Two spellings of one value is the same
-# defect family as #2793/#2796, so pin them to each other rather than trusting a comment.
-$bicepSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/main.bicep') -Raw
-if ($bicepSource -notmatch 'replicaTimeout:\s*(\d+)') {
-    $failures.Add('Could not read replicaTimeout from infra/buildtest/main.bicep.')
-}
-elseif ($azureRunnerSource -notmatch 'ReplicaTimeoutMinutes\s*=\s*(\d+)') {
-    $failures.Add('Could not read ReplicaTimeoutMinutes from Invoke-AzureBuildTest.ps1.')
-}
-else {
-    $bicepSeconds = [int]([regex]::Match($bicepSource, 'replicaTimeout:\s*(\d+)').Groups[1].Value)
-    $scriptMinutes = [int]([regex]::Match($azureRunnerSource, 'ReplicaTimeoutMinutes\s*=\s*(\d+)').Groups[1].Value)
-    if ($bicepSeconds -ne $scriptMinutes * 60) {
-        $failures.Add("Timeout budget drift: main.bicep replicaTimeout is ${bicepSeconds}s but Invoke-AzureBuildTest reports ${scriptMinutes} min ($($scriptMinutes * 60)s).")
-    }
+# Infrastructure replica configuration is verified in the standalone runner repo.
+# This application test pins only its own client default, not a live deployment.
+if ($azureRunnerSource -notmatch 'ReplicaTimeoutMinutes\s*=\s*20\b') {
+    $failures.Add('The application client replica budget default must remain 20 minutes.')
 }
 if ($azureRunnerSource -notmatch "(?s)Mode -ne 'strict'.+playwrightArtifact" -or
     $azureRunnerSource -notmatch 'result.exitCode -eq 0 -and\s+\$requiredArtifactsPresent') {
@@ -298,11 +286,8 @@ if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
     $snapshotSource -notmatch 'Assert-SourceSnapshotPath \$entry.FullName') {
     $failures.Add('Azure snapshots must use the exact-source module and preserve literal paths through NUL-safe enumeration, ZIP capture and validated reconstruction.')
 }
-$entrypointSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1') -Raw
-if ($entrypointSource -notmatch "playwright\.log" -or
-    $entrypointSource -notmatch "'strict' \{") {
-    $failures.Add('The remote runner must implement strict mode and fail when Playwright did not run.')
-}
+# Image mode implementation is covered by the standalone runner's source tests.
+# This fixture continues to verify the application's receipt and mode-selection rules.
 
 $repositories = [Collections.Generic.List[string]]::new()
 # Scenario counter: proves the block below actually ran. If an early throw skips the

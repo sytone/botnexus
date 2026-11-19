@@ -162,18 +162,13 @@ AfterAll {
 Describe 'Fenced sender qualification and resume' {
     BeforeEach {
         $script:candidate = Join-Path $script:root ([guid]::NewGuid().ToString('N'))
-        $names = @('Invoke-AzureBuildTest.ps1', 'Resume-AzureBuildTest.ps1', 'AzureBuildTestRecovery.psm1', 'AzureBuildTestArtifacts.psm1', 'SourceSnapshot.psm1', 'Get-WorktreeValidationFingerprint.ps1', 'RunnerReleaseCompatibility.psm1')
+        $names = @('Invoke-AzureBuildTest.ps1', 'Resume-AzureBuildTest.ps1', 'AzureBuildTestRecovery.psm1', 'AzureBuildTestArtifacts.psm1', 'SourceSnapshot.psm1', 'Get-WorktreeValidationFingerprint.ps1', 'RunnerReleaseCompatibility.psm1', 'ApplicationDiagnosticContract.psm1')
         foreach ($name in $names) {
             $path = Join-Path $script:candidate ('scripts/repo/' + $name)
             [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
             Copy-Item -LiteralPath (Join-Path $script:repository ('scripts/repo/' + $name)) -Destination $path
         }
-        foreach ($relative in @('infra/buildtest/RunnerImageProvenance.ps1', 'infra/buildtest/runner/RunnerDiagnostic.ps1')) {
-            $path = Join-Path $script:candidate $relative
-            [IO.Directory]::CreateDirectory((Split-Path -Parent $path)) | Out-Null
-            Copy-Item -LiteralPath (Join-Path $script:repository $relative) -Destination $path
-        }
-        [IO.File]::WriteAllText((Join-Path $script:candidate 'infra/buildtest/runner/entrypoint.ps1'), '# fixture checkout differs from approved image source tag')
+        # Image/provenance implementation is not part of this application fixture.
         [IO.Directory]::CreateDirectory((Join-Path $script:candidate 'tests/unit/Example.Tests')) | Out-Null
         [IO.File]::WriteAllText((Join-Path $script:candidate 'tests/unit/Example.Tests/Example.Tests.csproj'), '<Project><ItemGroup><PackageReference Include="Microsoft.NET.Test.Sdk" /></ItemGroup></Project>')
         & git -C $script:candidate init --quiet

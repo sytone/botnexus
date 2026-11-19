@@ -115,7 +115,7 @@ Describe 'Operator-owned release compatibility API' {
     It 'requires a newly qualified release after execution input <Path> changes' -ForEach @(
         @{ Path = 'infra/buildtest/runner/entrypoint.ps1' }
         @{ Path = 'infra/buildtest/runner/Dockerfile' }
-        @{ Path = 'infra/buildtest/main.bicep' }
+        @{ Path = 'infra/buildtest/RunnerImageProvenance.ps1' }
         @{ Path = 'scripts/repo/SourceSnapshot.psm1' }
         @{ Path = 'scripts/repo/Assert-TestResultContract.ps1' }
         @{ Path = 'scripts/repo/Invoke-BoundedCoreTests.ps1' }
