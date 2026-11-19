@@ -34,25 +34,59 @@ $script:DeliberateSkipPatterns = @(
 $script:ProcessFailurePattern = 'exit \d+|exit code|Exception|Fixture (failed|init|initialization)|One or more errors occurred|could not be (created|constructed)|Class fixture|Collection fixture'
 
 function Test-DeliberateSkipReason {
+    <#
+    .SYNOPSIS
+    Recognizes declared application skip reasons without accepting fixture crashes.
+    .DESCRIPTION
+    Process-failure patterns take precedence over the deliberate skip allowlist.
+    .PARAMETER Reason
+    Skip reason recorded by a TRX result row.
+    .EXAMPLE
+    Test-DeliberateSkipReason -Reason 'Windows-only test.'
+    .OUTPUTS
+    System.Boolean. Whether the skip reason is recognized.
+    #>
+
     [CmdletBinding()]
+    [OutputType([bool])]
     param([string] $Reason)
 
-    if ([string]::IsNullOrWhiteSpace($Reason)) { return $false }
-    if ($Reason -match $script:ProcessFailurePattern) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Reason)) {
+        return $false
+    }
+    if ($Reason -match $script:ProcessFailurePattern) {
+        return $false
+    }
     foreach ($pattern in $script:DeliberateSkipPatterns) {
-        if ($Reason -match $pattern) { return $true }
+        if ($Reason -match $pattern) {
+            return $true
+        }
     }
     return $false
 }
 
 function Get-RunnerTestResult {
+    <#
+    .SYNOPSIS
+    Checks application TRX counters, rows and skipped coverage.
+    .DESCRIPTION
+    Rejects missing, empty, impossible, uncorroborated, failed or collapsed runs. Preserves the existing deliberate-skip policy.
+    .PARAMETER TrxPaths
+    TRX files to validate.
+    .PARAMETER MinimumTotal
+    Minimum expected aggregate test count; zero disables only the size floor.
+    .EXAMPLE
+    Get-RunnerTestResult -TrxPaths $paths -MinimumTotal 12000
+    .OUTPUTS
+    System.Management.Automation.PSCustomObject. Counts, completeness and failure reason.
+    #>
+
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)]
         [AllowEmptyCollection()]
         [string[]] $TrxPaths,
 
-        [switch] $RequireZeroSkipped,
 
         # A collapsed run is indistinguishable from a green one if only the pass/fail ratio is
         # checked: one passing test satisfies "0 failed" exactly as well as 12,765 do. The caller
@@ -99,7 +133,9 @@ function Get-RunnerTestResult {
         # Arithmetically impossible: a run cannot execute more tests than it contains. Accepting
         # it lets a forged counter block inflate `executed` past `total` and satisfy every
         # downstream check by construction.
-        if ($fileExecuted -gt $fileTotal) { $impossibleCounters = $true }
+        if ($fileExecuted -gt $fileTotal) {
+            $impossibleCounters = $true
+        }
 
         $summary.total += $fileTotal
         $summary.executed += $fileExecuted
@@ -117,13 +153,21 @@ function Get-RunnerTestResult {
         if ($resultsNode -and $trx.TestRun.Results) {
             $rows = @($trx.TestRun.Results.UnitTestResult) | Where-Object { $_ }
         }
-        if ($fileExecuted -gt 0 -and $rows.Count -eq 0) { $unverifiable = $true }
+        if ($fileExecuted -gt 0 -and $rows.Count -eq 0) {
+            $unverifiable = $true
+        }
 
         foreach ($unit in $rows) {
-            if ($unit.GetAttribute('outcome') -ne 'NotExecuted') { continue }
+            if ($unit.GetAttribute('outcome') -ne 'NotExecuted') {
+                continue
+            }
             $reason = $unit.Output.ErrorInfo.Message
-            if (Test-DeliberateSkipReason -Reason $reason) { $reasonedSkips++ }
-            else { $summary.fixtureFailures++ }
+            if (Test-DeliberateSkipReason -Reason $reason) {
+                $reasonedSkips++
+            }
+            else {
+                $summary.fixtureFailures++
+            }
         }
     }
 
@@ -134,12 +178,16 @@ function Get-RunnerTestResult {
     # a test that was neither executed nor deliberately skipped has NOT been validated, and
     # certifying it green is worse than reporting a failure.
     $unaccounted = $summary.total - $summary.executed - $summary.skipped
-    if ($unaccounted -gt 0) { $summary.skipped += $unaccounted }
+    if ($unaccounted -gt 0) {
+        $summary.skipped += $unaccounted
+    }
 
     # Skips that no result row explained: the TRX asserted them in its counters but never
     # said why. Unexplained is not the same as acceptable.
     $unexplained = $summary.skipped - $reasonedSkips - $summary.fixtureFailures
-    if ($unexplained -gt 0) { $summary.fixtureFailures += $unexplained }
+    if ($unexplained -gt 0) {
+        $summary.fixtureFailures += $unexplained
+    }
 
     if ($summary.total -eq 0 -or $summary.executed -eq 0) {
         $summary.failureReason = 'no-tests-executed'

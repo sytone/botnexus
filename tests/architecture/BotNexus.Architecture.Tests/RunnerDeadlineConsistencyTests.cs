@@ -1,19 +1,9 @@
 namespace BotNexus.Architecture.Tests;
 
 /// <summary>
-/// The remote gate's timeout budget is spelled in three places: <c>replicaTimeout</c> in the Bicep
-/// template, the <c>ReplicaTimeoutMinutes</c> parameter on the client script, and the deadline the
-/// container runner imposes on itself. They have to agree, because the whole mechanism of #3305
-/// depends on the runner's deadline landing strictly INSIDE the platform's.
-///
-/// This is not hypothetical. Before #3305 the runner had no deadline at all: the platform killed
-/// the replica at 20 minutes, the entrypoint's <c>finally</c> block never executed, and the run
-/// uploaded an EMPTY artifact directory. Two measured <c>full</c> runs died exactly that way, so
-/// the gate's only outcome was "killed, no evidence" -- unable to distinguish a hang from a slow
-/// suite, and unable to name the project that was still executing.
-///
-/// A comment asking future editors to keep the numbers aligned is a wish; these tests fail the
-/// build instead.
+/// Preserves the application's timeout default and its explicit budget input to an externally
+/// maintained runner. Template and runtime deadline contracts belong to botnexus-runner;
+/// the application must not keep image source merely to compare numeric defaults.
 /// </summary>
 public class RunnerDeadlineConsistencyTests : ArchitectureTest
 {

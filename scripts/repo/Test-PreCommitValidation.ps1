@@ -286,11 +286,8 @@ if ($azureRunnerSource -match 'ls-files.+-z.+tar --null' -or
     $snapshotSource -notmatch 'Assert-SourceSnapshotPath \$entry.FullName') {
     $failures.Add('Azure snapshots must use the exact-source module and preserve literal paths through NUL-safe enumeration, ZIP capture and validated reconstruction.')
 }
-$entrypointSource = Get-Content (Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1') -Raw
-if ($entrypointSource -notmatch "playwright\.log" -or
-    $entrypointSource -notmatch "'strict' \{") {
-    $failures.Add('The remote runner must implement strict mode and fail when Playwright did not run.')
-}
+# Image mode implementation is covered by the standalone runner's source tests.
+# This fixture continues to verify the application's receipt and mode-selection rules.
 
 $repositories = [Collections.Generic.List[string]]::new()
 # Scenario counter: proves the block below actually ran. If an early throw skips the

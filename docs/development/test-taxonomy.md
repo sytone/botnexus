@@ -70,7 +70,7 @@ To explicitly run remote non-browser CORE for a task worktree, replace `<worktre
 scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 ```
 
-The [runner's core selection](https://github.com/sytone/botnexus/blob/main/infra/buildtest/runner/entrypoint.ps1) excludes the `BotNexus.Integration.E2E` and `BotNexus.E2E` fully qualified name families. Browser-emulated E2E is quarantined under #3601. `-Mode full` and `-Mode playwright` are explicit diagnostics, not required normal gates or proof that quarantine re-entry criteria are satisfied. Record actual results and skipped coverage separately; non-browser CORE passing does not establish browser coverage.
+The [application CORE selection](https://github.com/sytone/botnexus/blob/main/scripts/repo/Invoke-BoundedCoreTests.ps1) excludes the `BotNexus.Integration.E2E` and `BotNexus.E2E` fully qualified name families. Browser-emulated E2E is quarantined under #3601. `-Mode full` and `-Mode playwright` are explicit diagnostics, not required normal gates or proof that quarantine re-entry criteria are satisfied. Record actual results and skipped coverage separately; non-browser CORE passing does not establish browser coverage.
 
 `scripts/repo/test-impacted.ps1 -DryRun` is a selection preview only. Do not run local `dotnet test`, `test.ps1`, or executing `test-impacted.ps1` on a live-gateway host. If remote infrastructure is genuinely unavailable, the root instructions define the explicitly selected local strict fallback and its safety restrictions; do not silently switch to it.
 

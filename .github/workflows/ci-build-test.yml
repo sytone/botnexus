@@ -63,7 +63,7 @@ jobs:
   # E2E is excluded on purpose and temporarily: on 2026-08-06 a full run reported exit 0 with
   # 265 of 280 E2E tests NotExecuted, which is neither passed nor failed, so a fixture crash
   # certified a green gate that had silently skipped them. Core must be trustworthy before E2E
-  # is folded back in. The filter matches infra/buildtest/runner/entrypoint.ps1 'core' mode so
+  # is folded back in. The filter matches scripts/repo/Invoke-BoundedCoreTests.ps1 CORE scope so
   # CI and the remote container gate agree on what core means.
   core-tests:
     if: github.event_name == 'pull_request'
@@ -98,8 +98,9 @@ jobs:
       # The step above answers only "did any test that ran fail?". It is silent on whether the
       # tests ran at all, so a crashed fixture, a filter typo or a missing TRX exits 0 and paints
       # this check green. On 2026-08-06 the E2E project emitted notExecuted=0 while carrying 265
-      # NotExecuted rows -- 15 of 280 tests executed and the gate passed. The container grew
-      # RunnerResult.ps1 for exactly that (#2851); CI never did, so a PR could be certified by a
+      # NotExecuted rows -- 15 of 280 tests executed and the gate passed. The result checker
+      # now lives in ApplicationTestResult.psm1; it preserves the fail-closed policy (#2851).
+      # Before sharing that policy, a PR could be certified by a
       # standard this repo had already rejected.
       #
       # `if: always()` so a red dotnet test still gets its result contract evaluated and reported
@@ -142,7 +143,7 @@ jobs:
 
       - name: Test
         # Core scope: everything except the browser/E2E projects. The filter is kept identical to
-        # the core-tests job above and to infra/buildtest/runner/entrypoint.ps1 'core' mode --
+        # the core-tests job above and to scripts/repo/Invoke-BoundedCoreTests.ps1 CORE scope --
         # three spellings of the same scope is how they drift apart.
         #
         # This previously also excluded BotNexus.Integration.* and BotNexus.Conversation.*, which

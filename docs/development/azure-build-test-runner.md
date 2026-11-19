@@ -167,9 +167,11 @@ belong to [sytone/botnexus-runner](https://github.com/sytone/botnexus-runner).
 Use that repository's infrastructure guide for registry creation, ACR image
 build/publication, Azure validation, deployment and image-only updates. There is
 no deployment entrypoint in this application repository. Keep all real deployment
-settings outside Git. Legacy application-facing runtime helpers and their tests remain
-for the current client and CI until a separately validated cutover. Their presence is
-not an image build context or a second infrastructure deployment path.
+settings outside Git. Application-only result checking, bounded test execution and diagnostic request/proof
+validation live under `scripts/repo`. No image entrypoint, container process containment
+or image-owned tests remain here. See the [move inventory](runner-infrastructure-move.md)
+for ownership and preserved test destinations. Live application integration remains
+a separate stage.
 
 Tags must not be overwritten. The runner-owned build command uses a source-bound
 unique tag and returns an immutable digest. A tag or successful source move is not

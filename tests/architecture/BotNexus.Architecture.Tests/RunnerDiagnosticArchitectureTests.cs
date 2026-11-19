@@ -12,11 +12,11 @@ namespace BotNexus.Architecture.Tests;
 public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
 {
     [Theory]
-    [InlineData("Test-RunnerDiagnostic.ps1")]
-    [InlineData("RunnerDiagnosticDeadline.Tests.ps1")]
-    [InlineData("RunnerDiagnosticCleanup.Tests.ps1")]
-    [InlineData("RunnerDiagnosticPublication.Tests.ps1")]
-    public async Task Diagnostic_CandidateSourceFixtures_PassWithoutGatewayOrTesthost(string script)
+    [InlineData("Test-ApplicationDiagnosticContract.ps1", "failed=0")]
+    [InlineData("Test-ApplicationTestExecution.ps1", "Application test execution: PASS")]
+    [InlineData("Test-ApplicationTestResult.ps1", "RunnerResult.Tests.ps1: PASS")]
+    [InlineData("Test-CoreTestExecution.ps1", "CoreTestExecution tests passed.")]
+    public async Task ApplicationValidation_ContractFixture_PassesWithoutGatewayOrTesthost(string script, string completionMarker)
     {
         var start = new ProcessStartInfo("pwsh")
         {
@@ -27,7 +27,7 @@ public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
         };
         start.ArgumentList.Add("-NoProfile");
         start.ArgumentList.Add("-File");
-        start.ArgumentList.Add(Repository.Path("infra", "buildtest", "runner", "tests", script));
+        start.ArgumentList.Add(Repository.Path("scripts", "repo", script));
         using var process = Process.Start(start);
         process.ShouldNotBeNull("PowerShell is required; missing harness must fail closed.");
         var stdout = process.StandardOutput.ReadToEndAsync();
@@ -37,7 +37,7 @@ public sealed class RunnerDiagnosticArchitectureTests : ArchitectureTest
         finally { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         var output = await stdout + await stderr;
         process.ExitCode.ShouldBe(0, output);
-        output.ShouldContain("failed=0");
+        output.ShouldContain(completionMarker);
     }
 
     [Fact]

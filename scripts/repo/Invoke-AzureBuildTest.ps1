@@ -55,7 +55,7 @@ param(
     [string]$DiagnosticProject,
     [ValidateRange(1, 600)][int]$DiagnosticHangSeconds = 120,
 
-    # Must track replicaTimeout in infra/buildtest/main.bicep. Kept as a parameter so the
+    # Must match the externally configured replica timeout budget. Kept as a parameter so the
     # reported budget cannot silently drift from the deployed one when either is retuned.
     [int]$ReplicaTimeoutMinutes = 20,
     [string]$WorktreePath = (Get-Location).Path,
@@ -110,7 +110,7 @@ if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($repoRoot)) {
 }
 $repoRoot = $repoRoot.Trim()
 if ($Mode -eq 'diagnostic') {
-    . (Join-Path $repoRoot 'infra/buildtest/runner/RunnerDiagnostic.ps1')
+    Import-Module (Join-Path $PSScriptRoot 'ApplicationDiagnosticContract.psm1') -Force
     Resolve-DiagnosticProject -SourceRoot $repoRoot -Project $DiagnosticProject | Out-Null
     $KeepRemoteArtifacts = $true
 }
@@ -195,25 +195,8 @@ try {
         Assert-RunnerReleaseBinding @releaseParameters | Out-Null
     }
 
-    # Source drift remains advisory attribution only, never release approval.
-    try {
-        . (Join-Path $PSScriptRoot '../../infra/buildtest/RunnerImageProvenance.ps1')
-        $deployedIdentity = ($immutableImage -split '@', 2)[1]
-        $deployedAliases = @()
-        $registryName = ($immutableImage -split '[./]')[0]
-        $repositoryAndDigest = ($immutableImage -split '/', 2)[1]
-        $sourceMetadata = Invoke-AzJson @('acr', 'manifest', 'show-metadata', '--registry', $registryName, '--name', $repositoryAndDigest, '--only-show-errors', '-o', 'json')
-        if ($sourceMetadata.PSObject.Properties['tags']) {
-            $deployedAliases = @($sourceMetadata.tags)
-        }
-        $provenance = Test-RunnerImageMatchesSources -RunnerPath (Join-Path $PSScriptRoot '../../infra/buildtest/runner') -DeployedTag $deployedIdentity -DeployedAliases $deployedAliases
-        if ($provenance.Verdict -eq 'mismatch') {
-            Write-Warning 'Runner source tag differs from this checkout; current external execution-contract qualification governs compatibility. This diagnostic does not require automatic rebuild or redeployment.'
-        }
-    }
-    catch {
-        Write-Verbose "Advisory source provenance unavailable: $($_.Exception.Message)"
-    }
+    # Infrastructure/image source provenance is maintained by the standalone owner.
+    # The existing external immutable-image qualification above remains authoritative.
 
     # BEGIN EXACT SOURCE CAPTURE
     $fingerprint = & $fingerprintScript -WorktreePath $repoRoot -BaseRef $BaseRef

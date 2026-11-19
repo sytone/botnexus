@@ -44,7 +44,7 @@ function Assert-True {
 
 $repoRoot = $PSScriptRoot | Split-Path -Parent | Split-Path -Parent
 $validatePath = Join-Path $repoRoot 'scripts/repo/Invoke-PreCommitValidation.ps1'
-$runnerPath = Join-Path $repoRoot 'infra/buildtest/runner/entrypoint.ps1'
+$runnerPath = Join-Path $repoRoot 'scripts/repo/Invoke-BoundedCoreTests.ps1'
 $workflowPath = Join-Path $repoRoot '.github/workflows/ci-build-test.yml'
 
 $validate = Get-Content -LiteralPath $validatePath -Raw
@@ -53,9 +53,9 @@ $workflow = Get-Content -LiteralPath $workflowPath -Raw
 
 Assert-True -Condition ($validate -match "\[ValidateSet\('strict', 'core'\)\]") -Because '1: strict gate does not constrain RemoteMode to strict/core'
 Assert-True -Condition ($validate -match '\[string\]\$RemoteMode\s*=\s*''core''') -Because '1: strict remote validation does not default to core'
-Assert-True -Condition ($runner -match "'core'\s*\{") -Because '2: runner lost the explicit core mode'
+Assert-True -Condition ($runner -match "-Mode 'core'") -Because '2: runner lost the explicit core mode'
 Assert-True -Condition ($runner -match 'FullyQualifiedName!~BotNexus\.Integration\.E2E&FullyQualifiedName!~BotNexus\.E2E') -Because '2: core mode no longer excludes both browser-E2E namespaces'
-Assert-True -Condition ($runner -match "'full'\s*\{" -and $runner -match "'playwright'\s*\{") -Because '3: explicit diagnostic full/playwright modes were removed rather than quarantined'
+Assert-True -Condition ((Get-Content -LiteralPath (Join-Path $repoRoot 'scripts/repo/Invoke-AzureBuildTest.ps1') -Raw) -match "ValidateSet\('strict', 'impacted', 'full', 'core', 'playwright', 'diagnostic'\)") -Because '3: explicit diagnostic full/playwright modes were removed rather than quarantined'
 Assert-True -Condition ($workflow -notmatch '(?m)^\s*e2e-portal-playwright:\s*$') -Because '4: automatic CI still declares the browser-emulation job'
 Assert-True -Condition ($workflow -match 'Browser-emulated E2E is quarantined') -Because '5: CI does not state the temporary quarantine/review contract'
 Assert-True -Condition ($workflow -match '#3601') -Because '5: quarantine lacks its issue-backed review/re-entry owner'
