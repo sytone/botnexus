@@ -173,6 +173,9 @@ public static class SessionContextProjector
     /// Calls in the latest turn are not declared abandoned, and completions flushed after its user
     /// message still resolve their original start.
     /// </remarks>
+    /// <exception cref="InvalidOperationException">
+    /// Overlapping starts make the recorded pairing ambiguous; recovery must preserve that evidence.
+    /// </exception>
     public static AbandonedTurnResult DetectAbandonedTurn(IReadOnlyList<SessionEntry> history)
     {
         ArgumentNullException.ThrowIfNull(history);
@@ -194,7 +197,11 @@ public static class SessionContextProjector
         if (lastUserIndex <= 0)
             return AbandonedTurnResult.None;
 
-        var abandoned = GetToolCallSpans(history)
+        var spans = GetToolCallSpans(history);
+        if (spans.Any(span => span.Ambiguous))
+            throw new InvalidOperationException("Cannot recover ambiguous tool call evidence without inventing a pairing.");
+
+        var abandoned = spans
             .Where(span => span.StartIndex is { } start && start < lastUserIndex && span.ResultIndex is null)
             .Select(span => history[span.StartIndex.GetValueOrDefault()])
             .ToArray();

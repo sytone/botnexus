@@ -613,8 +613,30 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
+        var (estimatePressure, providerPressure, _) = EvaluateTokenTriggers(planMeasurement, options);
+        var requireReduction = options.PreserveLatestRequest && (estimatePressure || providerPressure);
+        CompactionResult SkipWithoutReduction(int proposedTokens, bool summaryAttempted)
+        {
+            var failures = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                "Compaction aborted for session {SessionId}: {Reason}. Estimated context would be {After} " +
+                "rather than less than {Before} tokens; summarization attempted: {SummaryAttempted}. " +
+                "History and provider usage are unchanged. Review mandatory context and fixed prompt overhead; " +
+                "consecutive failures: {Failures}/{Max}.",
+                session.SessionId, CompactionSkipReason.NoContextReduction, proposedTokens, tokensBefore,
+                summaryAttempted, failures, MaxConsecutiveFailures);
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion, snap.Count, entriesPreserved: visible.Count,
+                tokensBefore: tokensBefore, tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.NoContextReduction);
+        }
+
+        var minimumTokensAfter = prefixTokens + EstimateVisibleTokenCountFromEntries(toPreserve);
+        if (requireReduction && minimumTokensAfter >= tokensBefore)
+            return SkipWithoutReduction(minimumTokensAfter, summaryAttempted: false);
+
         var priorSummary = ExtractPriorSummary(toSummarize);
-        var remainingSummaryTokens = targetTokens - prefixTokens - EstimateVisibleTokenCountFromEntries(toPreserve);
+        var remainingSummaryTokens = targetTokens - minimumTokensAfter;
         // A character is at most one unit of the script-aware token estimate. When mandatory
         // context makes the target irreducible, preserve the normal handoff instead of silently
         // reducing it to a meaningless fragment; the no-rewrite guard bounds repeat attempts.
@@ -718,21 +740,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // insert-at-index walk (the #532 drop-entries bug class) is independently testable.
         var newHistory = BuildCompactedHistory(history, toSummarize, summary);
         var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
-        var (estimatePressure, providerPressure, _) = EvaluateTokenTriggers(planMeasurement, options);
-        if (options.PreserveLatestRequest && (estimatePressure || providerPressure) && tokensAfter >= tokensBefore)
-        {
-            var failures = RecordFailure(sessionKey);
-            _logger.LogWarning(
-                "Compaction aborted for session {SessionId}: {Reason}. Estimated context would grow from {Before} " +
-                "to {After} tokens. History and provider usage are unchanged. Increase the trigger or reduce mandatory " +
-                "context; consecutive failures: {Failures}/{Max}.",
-                session.SessionId, CompactionSkipReason.NoContextReduction, tokensBefore, tokensAfter,
-                failures, MaxConsecutiveFailures);
-            return CompactionResult.Skipped(
-                snap.DestructiveVersion, snap.Count, entriesPreserved: visible.Count,
-                tokensBefore: tokensBefore, tokensAfter: tokensBefore,
-                skipReason: CompactionSkipReason.NoContextReduction);
-        }
+        if (requireReduction && tokensAfter >= tokensBefore)
+            return SkipWithoutReduction(tokensAfter, summaryAttempted: true);
 
         _logger.LogInformation(
             "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +

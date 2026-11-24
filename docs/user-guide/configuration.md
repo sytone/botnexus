@@ -807,8 +807,13 @@ The cut targets roughly half the effective trigger, including estimated summary 
 than retaining the entire allowance after every cut. Mandatory context can make that target
 irreducible. Changes apply on the next policy check without restarting. Use `/context` to see
 the selected source, effective trigger, retained-tail limit and target.
-Lowering the policy can also shorten an oversized existing summary. A generated summary that
-would not reduce token-pressure context is rejected as `NoContextReduction`, preserving history.
+After repeated failures, retries still wait for the existing circuit-breaker cooldown
+(600 seconds by default); changing settings does not clear that cooldown.
+Lowering the policy can also shorten an oversized existing summary. Automatic token-pressure
+compaction is rejected as `NoContextReduction` if it would not reduce context, preserving history.
+No summarization call is made when the required retained context and prefix already prevent
+any reduction. If provider usage is much higher than the history estimate, review the system
+prompt and tool definitions as well.
 An abandoned tool call from an earlier turn is recovered as an unknown outcome, not kept
 pending forever and not presented as a successful result.
 

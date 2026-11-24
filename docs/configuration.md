@@ -1494,6 +1494,9 @@ An oversized prior summary can be shortened once after you lower the live policy
 token-pressure compaction reports `NoContextReduction` instead of claiming success when the
 generated handoff would leave the estimated context unchanged or larger. That outcome preserves
 history and the provider measurement, and counts toward the existing failure circuit breaker.
+If the summary prefix and required retained context already preclude a reduction, no
+summarization request is made. When provider usage greatly exceeds the history estimate,
+also inspect system-prompt and tool-schema overhead: history compaction cannot remove those.
 These are estimated history savings, not a measured reduction in provider billing.
 
 Compaction keeps original transcript entries in storage and marks folded entries as historical.
@@ -1509,6 +1512,8 @@ completions. Remaining interrupted starts become historical audit rows with host
 unknown-outcome notices in working context. They no longer pin every future compaction tail.
 Calls pending in the current turn remain protected. Call identities reused in later completed
 exchanges are paired chronologically within their execution, never with an earlier result.
+Ambiguous overlapping starts are rejected before recovery changes their visibility, rather
+than guessing which invocation produced the recorded result.
 After successful live-context replacement, an unchanged file read returns its content again;
 repeat reads within unchanged context still use compact notices after checking the on-disk token.
 

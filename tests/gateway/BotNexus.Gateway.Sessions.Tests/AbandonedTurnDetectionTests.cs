@@ -148,6 +148,26 @@ public sealed class AbandonedTurnDetectionTests
     }
 
     [Fact]
+    public void SameCallIdentityInDifferentExecutions_DoesNotMakeTheEvidenceAmbiguous()
+    {
+        var firstRun = AgentRunId.From("first-run");
+        var secondRun = AgentRunId.From("second-run");
+        var history = new List<SessionEntry>
+        {
+            User("request"),
+            ToolStart() with { AgentRunId = firstRun },
+            ToolStart() with { AgentRunId = secondRun },
+            ToolEnd() with { AgentRunId = firstRun },
+            ToolEnd() with { AgentRunId = secondRun },
+            User("continue")
+        };
+
+        SessionContextProjector.DetectAbandonedTurn(history).HasAbandonedTurn.ShouldBeFalse();
+        SessionContextProjector.GetToolCallSpans(history)
+            .ShouldBe(new (int? StartIndex, int? ResultIndex, bool Ambiguous)[] { (1, 3, false), (2, 4, false) });
+    }
+
+    [Fact]
     public void OlderDanglingToolCall_RemainsRecoverableAfterAdditionalTurns()
     {
         var history = new List<SessionEntry>
