@@ -664,6 +664,15 @@ public sealed class CronActiveRunCancellationTests
             return Task.FromResult(result);
         }
 
+        public Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+        {
+            IReadOnlyList<SessionId> result = _sessions
+                .Where(s => s.AgentId == agentId && s.SessionId.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal))
+                .Select(s => s.SessionId)
+                .ToList();
+            return Task.FromResult(result);
+        }
+
         public Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
             => Task.FromResult(_sessions.FirstOrDefault(s => s.SessionId == sessionId));
         public Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken cancellationToken = default)
