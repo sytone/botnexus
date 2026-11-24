@@ -1328,36 +1328,9 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         await _supervisor.StopAsync(agentId, sessionId, cancellationToken).ConfigureAwait(false);
         // Stopping may flush a genuine completion. Re-read before declaring any outcome unknown.
         var snapshot = session.SnapshotHistoryForCompaction();
-        var abandoned = SessionContextProjector.DetectAbandonedTurn(snapshot.Entries);
-        if (!abandoned.HasAbandonedTurn)
+        var (recovered, recoveredCount) = SessionContextProjector.RecoverAbandonedToolCalls(snapshot.Entries);
+        if (recoveredCount == 0)
             return;
-
-        var starts = new HashSet<SessionEntry>(abandoned.AbandonedToolStarts, ReferenceEqualityComparer.Instance);
-        var recovered = new List<SessionEntry>();
-        foreach (var entry in snapshot.Entries)
-        {
-            if (!starts.Contains(entry))
-            {
-                recovered.Add(entry);
-                continue;
-            }
-            recovered.Add(entry with { IsHistory = true });
-            recovered.Add(new SessionEntry
-            {
-                Role = MessageRole.Assistant,
-                SenderId = "gateway:interrupted-tool-recovery",
-                ToolIsIncomplete = true,
-                Content = $"Host recovery: interrupted tool '{entry.ToolName ?? "(name not recorded)"}' " +
-                    $"(id '{entry.ToolCallId}') has an unknown outcome; no result was recorded. " +
-                    "Inspect existing evidence before repeating side effects. " +
-                    $"Arguments: {entry.ToolArgs ?? "(not recorded)"}"
-            });
-        }
-        recovered.Add(new SessionEntry
-        {
-            Role = MessageRole.Notification,
-            Content = $"[Previous turn did not complete — {abandoned.AbandonedEntryCount} tool call(s) were abandoned. Starting fresh.]"
-        });
         if (session.TryReplaceHistoryFromSnapshot(recovered, snapshot.DestructiveVersion, snapshot.Count)
             == HistoryReplaceOutcome.Aborted)
             throw new InvalidOperationException("Session history changed during interrupted-tool recovery. Retry the request.");
@@ -1365,7 +1338,7 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         _logger.LogWarning(
             "Recovered {Count} interrupted tool call(s) for session {SessionId} before compaction; " +
             "original audit rows are historical and outcomes remain unknown.",
-            abandoned.AbandonedEntryCount, sessionId);
+            recoveredCount, sessionId);
     }
 
     private async Task SendSessionStatusRejectedAsync(

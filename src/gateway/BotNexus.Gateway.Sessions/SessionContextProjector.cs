@@ -208,6 +208,47 @@ public static class SessionContextProjector
     }
 
     /// <summary>
+    /// Builds replacement working context only after the caller has stopped the stale handle.
+    /// Keeps original interrupted payloads historical and adds host-attributed unknown-outcome
+    /// notices, never synthetic tool results. The caller must fence and persist the replacement.
+    /// </summary>
+    public static (IReadOnlyList<SessionEntry> History, int RecoveredCount) RecoverAbandonedToolCalls(
+        IReadOnlyList<SessionEntry> history)
+    {
+        var abandoned = DetectAbandonedTurn(history);
+        if (!abandoned.HasAbandonedTurn)
+            return (history, 0);
+
+        var starts = new HashSet<SessionEntry>(abandoned.AbandonedToolStarts, ReferenceEqualityComparer.Instance);
+        var recovered = new List<SessionEntry>();
+        foreach (var entry in history)
+        {
+            if (!starts.Contains(entry))
+            {
+                recovered.Add(entry);
+                continue;
+            }
+            recovered.Add(entry with { IsHistory = true });
+            recovered.Add(new SessionEntry
+            {
+                Role = MessageRole.Assistant,
+                SenderId = "gateway:interrupted-tool-recovery",
+                ToolIsIncomplete = true,
+                Content = $"Host recovery: interrupted tool '{entry.ToolName ?? "(name not recorded)"}' " +
+                    $"(id '{entry.ToolCallId}') has an unknown outcome; no result was recorded. " +
+                    "Inspect existing evidence before repeating side effects. " +
+                    $"Arguments: {entry.ToolArgs ?? "(not recorded)"}"
+            });
+        }
+        recovered.Add(new SessionEntry
+        {
+            Role = MessageRole.Notification,
+            Content = $"[Previous turn did not complete — {abandoned.AbandonedEntryCount} tool call(s) were abandoned. Starting fresh.]"
+        });
+        return (recovered, abandoned.AbandonedEntryCount);
+    }
+
+    /// <summary>
     /// Pairs live tool rows chronologically within an execution. A reused identity after a completed
     /// exchange starts a new span, never supplies a result for a later pending call. Orphaned results
     /// and overlapping duplicate starts remain explicit so replay can reject ambiguous evidence.
@@ -254,7 +295,7 @@ public static class SessionContextProjector
 public sealed record AbandonedTurnResult(bool HasAbandonedTurn, int AbandonedEntryCount)
 {
     /// <summary>The original unfinished rows; recovery preserves their payloads in historical audit.</summary>
-    public IReadOnlyList<SessionEntry> AbandonedToolStarts { get; init; } = [];
+    internal IReadOnlyList<SessionEntry> AbandonedToolStarts { get; init; } = [];
 
     /// <summary>Singleton for the no-abandoned-turn case.</summary>
     public static readonly AbandonedTurnResult None = new(HasAbandonedTurn: false, AbandonedEntryCount: 0);
