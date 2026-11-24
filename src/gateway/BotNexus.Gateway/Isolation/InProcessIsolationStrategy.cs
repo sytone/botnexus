@@ -541,10 +541,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{summaryBlock}";
             }
 
-            initialMessages = resumeEntries
-                .Select(ConvertSessionEntryToAgentMessage)
-                .OfType<AgentMessage>()
-                .ToList();
+            initialMessages = summaries.Count > 0
+                ? ConvertCompactedHistoryToAgentMessages(context.History)
+                : resumeEntries.Select(ConvertSessionEntryToAgentMessage).OfType<AgentMessage>().ToList();
 
             _logger.LogInformation(
                 "Injecting {Count} history messages ({Summaries} summary folded into prompt, of {Total} entries) into agent context for session '{SessionId}'",
@@ -697,10 +696,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     : string.IsNullOrWhiteSpace(enrichedSystemPrompt)
                         ? string.Join("\n\n", compactedSummaries)
                         : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{string.Join("\n\n", compactedSummaries)}";
-                var compactedMessages = compactedEntries
-                    .Select(ConvertSessionEntryToAgentMessage)
-                    .OfType<AgentMessage>()
-                    .ToList();
+                List<AgentMessage> compactedMessages;
+                try
+                {
+                    compactedMessages = ConvertCompactedHistoryToAgentMessages(liveSession.History);
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+                {
+                    throw new ProactiveCompactionException(
+                        "Required proactive compaction could not restore retained tool evidence.", retryable: false, ex);
+                }
 
                 return new AgentContext(compactedSystemPrompt, compactedMessages, tools);
             };
@@ -1208,6 +1213,55 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var conversations = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
         return conversations.FirstOrDefault(conversation => conversation.ActiveSessionId == sessionId)?.ConversationId;
+    }
+
+    private static List<AgentMessage> ConvertCompactedHistoryToAgentMessages(IReadOnlyList<SessionEntry> history)
+    {
+        var visible = SessionContextProjector.ProjectForLiveContext(history);
+        var starts = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
+        var results = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
+        foreach (var entry in visible.Where(entry => entry.Role.Equals(MessageRole.Tool)))
+        {
+            if (entry.Kind != MessageKind.ToolStart && entry.Kind != MessageKind.ToolResult)
+                continue; // Legacy rows lack the typed pairing evidence needed for safe replay.
+            if (string.IsNullOrEmpty(entry.ToolCallId))
+                throw new InvalidOperationException("Retained typed tool evidence is missing its call identity.");
+            var target = entry.Kind == MessageKind.ToolStart ? starts : results;
+            if (!target.TryAdd(entry.ToolCallId, entry))
+                throw new InvalidOperationException($"Retained tool evidence has duplicate rows for '{entry.ToolCallId}'.");
+        }
+        if (starts.Count != results.Count || starts.Keys.Any(id => !results.ContainsKey(id)))
+            throw new InvalidOperationException("Retained tool evidence contains an unfinished or orphaned call.");
+
+        var messages = new List<AgentMessage>();
+        foreach (var entry in visible)
+        {
+            if (entry.Role.Equals(MessageRole.Tool))
+            {
+                if (entry.Kind != MessageKind.ToolStart)
+                    continue;
+                if (entry.ToolCallId is not { } id || string.IsNullOrWhiteSpace(entry.ToolName) || entry.ToolArgs is null)
+                    throw new InvalidOperationException("Retained tool evidence is missing its name or arguments.");
+                var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(entry.ToolArgs)
+                    ?? throw new InvalidOperationException($"Retained tool arguments are null for '{id}'.");
+                var result = results[id];
+
+                // Typed audit rows preserve the observed call and result, but not the original
+                // assistant batch. Replay complete exchanges rather than orphaned tool results.
+                messages.Add(new AssistantAgentMessage(
+                    "", [new ToolCallContent(id, entry.ToolName, args)], FinishReason: StopReason.ToolUse));
+                messages.Add(new ToolResultAgentMessage(
+                    id, entry.ToolName,
+                    new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result.Content)]),
+                    IsError: result.ToolIsError));
+            }
+            else if (SessionContextProjector.IsVisibleOnResume(entry) &&
+                     ConvertSessionEntryToAgentMessage(entry) is { } message)
+            {
+                messages.Add(message);
+            }
+        }
+        return messages;
     }
 
     // Compaction-summary System entries are folded into the system prompt on resume

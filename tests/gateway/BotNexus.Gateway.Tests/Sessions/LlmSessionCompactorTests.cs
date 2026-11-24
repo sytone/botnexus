@@ -1,4 +1,5 @@
 using System.Reflection;
+using BotNexus.Domain.Text;
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
@@ -9,10 +10,11 @@ using BotNexus.Agent.Providers.Core.Registry;
 using BotNexus.Agent.Providers.Core.Streaming;
 using Microsoft.Extensions.Logging.Abstractions;
 using Moq;
+using Xunit.Abstractions;
 
 namespace BotNexus.Gateway.Tests.Sessions;
 
-public sealed class LlmSessionCompactorTests
+public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
 {
     private static readonly LlmModel TestModel = new(
         Id: "test-model",
@@ -25,6 +27,300 @@ public sealed class LlmSessionCompactorTests
         Cost: new ModelCost(0, 0, 0, 0),
         ContextWindow: 32000,
         MaxTokens: 4096);
+
+    [Fact]
+    public async Task CompactAsync_SingleToolHeavyTurn_BoundsTailWithoutLosingIntentOrToolPairs()
+    {
+        var session = CreateSession(("user", "Inspect artifact://build/42 and fix the failing build."));
+        AddToolPairs(session, 100);
+        var original = session.GetHistorySnapshot().ToArray();
+        var compactor = CreateCompactor("Build 42 remains active; evidence: artifact://build/42.");
+        var options = new CompactionOptions { SummarizationModel = TestModel.Id };
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        var compacted = result.CompactedHistory.ShouldNotBeNull();
+        var retained = compacted.Where(entry => !entry.IsHistory && !entry.IsCompactionSummary).ToArray();
+        TokenEstimator.TokensFromUnits(retained.Sum(SessionContextProjector.GetLiveContextTokenUnits))
+            .ShouldBeLessThanOrEqualTo(12_000);
+        retained.ShouldContain(original[0]);
+        retained.Count(entry => entry.Role.Equals(MessageRole.Tool)).ShouldBeGreaterThan(0);
+        retained.Where(entry => entry.ToolCallId is not null).GroupBy(entry => entry.ToolCallId)
+            .ShouldAllBe(group => group.Count() == 2);
+        compacted.Where(entry => !entry.IsCompactionSummary).Select(entry => entry.Content)
+            .ShouldBe(original.Select(entry => entry.Content));
+        compacted.ToList().FindIndex(entry => entry.IsCompactionSummary)
+            .ShouldBeLessThan(compacted.ToList().FindIndex(entry => entry.Role.Equals(MessageRole.User) && !entry.IsHistory));
+        result.TokensAfter.ShouldBeLessThan(result.TokensBefore / 2);
+        session.ReplaceHistory(compacted);
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+        output.WriteLine("before={0}; after={1}; summarized={2}; preserved={3}; unchanged-tail retrigger=false",
+            result.TokensBefore, result.TokensAfter, result.EntriesSummarized, result.EntriesPreserved);
+    }
+
+    [Fact]
+    public async Task CompactAsync_TokenBudget_ChargesUnicodeArgumentsAndThinking()
+    {
+        var session = CreateSession(("user", "Continue the investigation."));
+        session.AddEntries(Enumerable.Range(0, 20).Select(index => new SessionEntry
+        {
+            Role = MessageRole.Assistant,
+            Content = $"Observation {index}",
+            ToolArgs = new string('\u4e00', 50),
+            ThinkingContent = new string('a', 200)
+        }));
+        var result = await CreateCompactor("Investigation summary").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTailTokens = 250,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var retained = result.CompactedHistory.ShouldNotBeNull()
+            .Where(entry => !entry.IsHistory && !entry.IsCompactionSummary).ToArray();
+        retained.Count(entry => entry.Role.Equals(MessageRole.Assistant)).ShouldBe(2);
+        TokenEstimator.TokensFromUnits(retained.Sum(SessionContextProjector.GetLiveContextTokenUnits))
+            .ShouldBeLessThanOrEqualTo(250);
+    }
+
+    [Fact]
+    public async Task CompactAsync_MandatoryRequestOverBudget_FailsWithoutReplacingEvidence()
+    {
+        var session = CreateSession(("user", new string('a', 48_004)));
+        AddToolPairs(session, 5);
+        var original = session.GetHistorySnapshot().ToArray();
+        var compactor = CreateCompactor("must not be used");
+        var options = new CompactionOptions { SummarizationModel = TestModel.Id };
+
+        for (var attempt = 0; attempt < LlmSessionCompactor.MaxConsecutiveFailures; attempt++)
+        {
+            var result = await compactor.CompactAsync(session, options);
+            result.Succeeded.ShouldBeFalse();
+            result.SkipReason.ShouldBe(CompactionSkipReason.MandatoryContextExceedsBudget);
+            result.CompactedHistory.ShouldBeNull();
+            result.TokensAfter.ShouldBe(result.TokensBefore);
+            session.GetHistorySnapshot().ShouldBe(original);
+        }
+        (await compactor.CompactAsync(session, options)).SkipReason.ShouldBe(CompactionSkipReason.CircuitBreakerOpen);
+    }
+
+    [Fact]
+    public async Task CompactAsync_ParallelPendingTools_RetainsWholeUnfinishedBoundary()
+    {
+        var session = CreateSession(("user", "Continue after approval."));
+        AddToolPairs(session, 10);
+        var pending = new[]
+        {
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolCallId = "pending-a", ToolArgs = "{}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolCallId = "pending-b", ToolArgs = "{}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "awaiting approval", ToolCallId = "pending-b", Kind = MessageKind.ToolResult }
+        };
+        session.AddEntries(pending);
+
+        var result = await CreateCompactor("Earlier results are in artifact://build/42.").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTailTokens = 100,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var retained = result.CompactedHistory.ShouldNotBeNull().Where(entry => !entry.IsHistory).ToArray();
+        pending.ShouldAllBe(entry => retained.Contains(entry));
+        retained.ShouldContain(entry => entry.Role.Equals(MessageRole.User));
+    }
+
+    [Fact]
+    public async Task CompactAsync_PendingToolArgumentsOverBudget_FailsSafelyEvenWhenForced()
+    {
+        var session = CreateSession(("user", "Approve before execution."));
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "", ToolCallId = "pending",
+            ToolArgs = new string('a', 1000), Kind = MessageKind.ToolStart
+        });
+        var original = session.GetHistorySnapshot().ToArray();
+
+        var result = await CreateCompactor("must not be used").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 0,
+            PreservedTailTokens = 100,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeFalse();
+        result.SkipReason.ShouldBe(CompactionSkipReason.MandatoryContextExceedsBudget);
+        session.GetHistorySnapshot().ShouldBe(original);
+    }
+
+    [Fact]
+    public async Task CompactAsync_RepeatedLongRun_LeavesHeadroomBetweenCompactions()
+    {
+        var session = CreateSession(("user", "Investigate the long-running build."));
+        var compactor = CreateCompactor("Evidence remains available at artifact://build/42.");
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 32_000,
+            SummarizationModel = TestModel.Id
+        };
+        var compactions = 0;
+        var lastCut = 0;
+        for (var step = 1; step <= 160; step++)
+        {
+            AddToolPairs(session, 1, step);
+            if (!compactor.ShouldCompact(session.Session, options))
+                continue;
+            var result = await compactor.CompactAsync(session, options);
+            result.Succeeded.ShouldBeTrue();
+            var interval = step - lastCut;
+            interval.ShouldBeGreaterThan(10);
+            session.ReplaceHistory(result.CompactedHistory.ShouldNotBeNull());
+            compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+            output.WriteLine("step={0}; interval={1}; before={2}; after={3}; summarized={4}; preserved={5}",
+                step, interval, result.TokensBefore, result.TokensAfter, result.EntriesSummarized, result.EntriesPreserved);
+            lastCut = step;
+            compactions++;
+        }
+        compactions.ShouldBeGreaterThan(2);
+    }
+
+    [Fact]
+    public async Task CompactAsync_OnlySummaryAndActiveRequestRemain_DoesNotRepeatAnIneffectiveCut()
+    {
+        var session = CreateSession(("user", "Keep investigating."));
+        AddToolPairs(session, 10);
+        var compactor = CreateCompactor("Reference: artifact://build/42.");
+        var options = new CompactionOptions
+        {
+            PreservedTailTokens = 100,
+            ContextWindowTokens = 100,
+            TokenThresholdRatio = 0.5,
+            SummarizationModel = TestModel.Id
+        };
+        var first = await compactor.CompactAsync(session, options);
+        first.Succeeded.ShouldBeTrue();
+        session.ReplaceHistory(first.CompactedHistory.ShouldNotBeNull());
+        var original = session.GetHistorySnapshot().ToArray();
+
+        var second = await compactor.CompactAsync(session, options);
+
+        second.Succeeded.ShouldBeFalse();
+        second.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
+        session.GetHistorySnapshot().ShouldBe(original);
+        output.WriteLine("irreducible summary/request overhead={0} tokens; repeated cut aborted", first.TokensAfter);
+    }
+
+    [Fact]
+    public async Task CompactAsync_InterleavedCompletedTools_DoesNotCutBetweenParallelSiblings()
+    {
+        var session = CreateSession(("user", "Investigate parallel results."));
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolCallId = "a", ToolArgs = "{}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolCallId = "b", ToolArgs = "{}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = new string('a', 1000), ToolCallId = "b", Kind = MessageKind.ToolResult },
+            new SessionEntry { Role = MessageRole.Tool, Content = new string('b', 1000), ToolCallId = "a", Kind = MessageKind.ToolResult },
+            new SessionEntry { Role = MessageRole.Assistant, Content = "Both results are ready." }
+        });
+
+        var result = await CreateCompactor("Two completed calls; artifacts remain in the transcript.").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTailTokens = 300,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var entries = result.CompactedHistory.ShouldNotBeNull();
+        entries.Where(entry => entry.ToolCallId is "a" or "b").ShouldAllBe(entry => entry.IsHistory);
+        entries.ShouldContain(entry => entry.Content == "Both results are ready." && !entry.IsHistory);
+    }
+
+    [Fact]
+    public async Task CompactAsync_ByteTriggeredOversizedCompletedResult_IsFoldedUnderDefaultTokenBudget()
+    {
+        var session = CreateSession(("user", "Investigate."), ("tool", new string('a', 70 * 1024)));
+        var compactor = CreateCompactor("Evidence: artifact://build/42.");
+        var options = new CompactionOptions { SummarizationModel = TestModel.Id };
+
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue();
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        var compacted = result.CompactedHistory.ShouldNotBeNull();
+        compacted.Single(entry => entry.Role.Equals(MessageRole.Tool)).IsHistory.ShouldBeTrue();
+        session.ReplaceHistory(compacted);
+        session.Metadata.ShouldNotContainKey(LlmSessionCompactor.IneffectiveByteCompactionMetadataKey);
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CompactAsync_BudgetedCut_MergesPriorFactsAndPassesRealArtifactReferencesToSummarizer()
+    {
+        var session = CreateSession(("user", "Continue investigating."));
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System, Content = "Decision: keep the existing public contract.",
+            IsCompactionSummary = true
+        });
+        AddToolPairs(session, 20);
+        string? prompt = null;
+        var compactor = CreateCompactorCapturingPrompt("Carry forward the decision and artifact://build/42.", value => prompt = value);
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            PreservedTailTokens = 1000,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        prompt.ShouldNotBeNull().ShouldContain("artifact://build/42");
+        prompt.ShouldContain("call-0");
+        prompt.ShouldContain(LlmSessionCompactor.PriorSummaryOpenTag);
+        prompt.ShouldContain("Decision: keep the existing public contract.");
+        result.CompactedHistory.ShouldNotBeNull().Single(entry => entry.Content == "Continue investigating.").IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task CompactAsync_NoUserTurns_BoundsTheRetainedToolGroups()
+    {
+        var session = CreateSession();
+        AddToolPairs(session, 20);
+
+        var result = await CreateCompactor("Tool evidence: artifact://build/42.").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTailTokens = 1000,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var retained = result.CompactedHistory.ShouldNotBeNull()
+            .Where(entry => !entry.IsHistory && !entry.IsCompactionSummary).ToArray();
+        retained.Length.ShouldBe(2);
+        retained.Select(entry => entry.ToolCallId).Distinct().ShouldHaveSingleItem();
+        TokenEstimator.TokensFromUnits(retained.Sum(SessionContextProjector.GetLiveContextTokenUnits))
+            .ShouldBeLessThanOrEqualTo(1000);
+    }
+
+    private static void AddToolPairs(GatewaySession session, int count, int firstId = 0)
+    {
+        for (var index = firstId; index < firstId + count; index++)
+        {
+            var id = $"call-{index}";
+            session.AddEntries(new[]
+            {
+                new SessionEntry
+                {
+                    Role = MessageRole.Tool, Content = "", ToolCallId = id, ToolName = "read",
+                    ToolArgs = "{\"path\":\"artifact://build/42\"}", Kind = MessageKind.ToolStart
+                },
+                new SessionEntry
+                {
+                    Role = MessageRole.Tool, Content = new string('a', 2000), ToolCallId = id,
+                    ToolName = "read", Kind = MessageKind.ToolResult
+                }
+            });
+        }
+    }
 
     [Fact]
     public void Ceiling_ThresholdBoundariesCapacityAndUnknownUsage()
@@ -908,6 +1204,7 @@ public sealed class LlmSessionCompactorTests
         var options = new CompactionOptions
         {
             PreservedTurns = 1,
+            PreservedTailTokens = 24_000, // Isolate byte suppression with a tail that fits the explicit token budget.
             ContextWindowTokens = 1_000_000,
             TokenThresholdRatio = 0.5,
             LargestEntryBytesThreshold = 64 * 1024,
@@ -947,6 +1244,7 @@ public sealed class LlmSessionCompactorTests
         var byteOnlyOptions = new CompactionOptions
         {
             PreservedTurns = 1,
+            PreservedTailTokens = 24_000,
             ContextWindowTokens = 1_000_000,
             TokenThresholdRatio = 0.5,
             LargestEntryBytesThreshold = 64 * 1024,
@@ -985,6 +1283,7 @@ public sealed class LlmSessionCompactorTests
         var options = new CompactionOptions
         {
             PreservedTurns = 1,
+            PreservedTailTokens = 24_000,
             ContextWindowTokens = 1_000_000,
             TokenThresholdRatio = 0.5,
             LargestEntryBytesThreshold = 64 * 1024,
@@ -1024,6 +1323,7 @@ public sealed class LlmSessionCompactorTests
         var options = new CompactionOptions
         {
             PreservedTurns = 1,
+            PreservedTailTokens = 24_000,
             ContextWindowTokens = 1_000_000,
             TokenThresholdRatio = 0.5,
             LargestEntryBytesThreshold = 64 * 1024,

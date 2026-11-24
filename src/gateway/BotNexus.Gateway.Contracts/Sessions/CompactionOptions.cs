@@ -7,14 +7,28 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// </summary>
 public sealed record CompactionOptions
 {
-    /// <summary>Number of most recent user turns to preserve verbatim (default: 3).</summary>
+    /// <summary>Preferred recent user turns, subject to the token budget; zero explicitly summarizes all completed work.</summary>
     [Display(
         Name = "Preserved turns",
-        Description = "Number of most recent user turns to preserve verbatim (default: 3).",
+        Description = "Preferred recent user turns within the preserved-tail token budget (default: 3). Zero explicitly summarizes all completed work.",
         GroupName = "Compaction",
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
     public int PreservedTurns { get; init; } = 3;
+
+    /// <summary>
+    /// Estimated token budget for verbatim retained entries, excluding the new summary and system
+    /// overhead (default: 12000). The latest request and unfinished tool groups are mandatory;
+    /// compaction fails without modifying history when these alone exceed the positive budget.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Preserved tail tokens",
+        Description = "Positive estimated token budget for recent verbatim context (default: 12000), excluding the summary and system overhead. Mandatory context exceeding it aborts compaction without changing history.",
+        GroupName = "Compaction",
+        Order = 12)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 12)]
+    public int PreservedTailTokens { get; init; } = 12_000;
 
     /// <summary>Maximum characters for the compaction summary (default: 16000).</summary>
     [Display(

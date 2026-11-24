@@ -1443,6 +1443,7 @@ The `compaction` section tunes when and how a session's history is summarised to
 
 ```bash
 botnexus config set gateway.compaction.preservedTurns 3
+botnexus config set gateway.compaction.preservedTailTokens 12000
 botnexus config set gateway.compaction.tokenThresholdRatio 0.6
 botnexus config set gateway.compaction.contextWindowTokens 128000
 botnexus config set gateway.compaction.largestEntryBytesThreshold 65536
@@ -1450,13 +1451,33 @@ botnexus config set gateway.compaction.largestEntryBytesThreshold 65536
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `preservedTurns` | int | 3 | Number of most recent user turns preserved verbatim (never summarised). |
+| `preservedTurns` | int | 3 | Preferred recent user turns to retain verbatim within `preservedTailTokens`. Zero explicitly summarises all completed work, including the latest request. |
+| `preservedTailTokens` | int | 12000 | Positive estimated token budget for retained verbatim entries. Includes content, tool arguments and reasoning; excludes the new summary, system prompt and tool schemas. |
 | `maxSummaryChars` | int | 16000 | Maximum characters for the compaction summary. |
 | `tokenThresholdRatio` | double | 0.6 | Fraction of the context window (0.0–1.0) at which the token-count trigger fires. |
 | `contextWindowTokens` | int | 128000 | **Fallback** context window size (tokens) for the token-count trigger, used only when no scoped window is resolved. See [Scoped context windows](#scoped-context-windows) below. |
 | `largestEntryBytesThreshold` | int | 65536 (64 KiB) | A single visible entry at or above this UTF-8 byte size triggers compaction on its own, independently of the token-count threshold. Measured in bytes (not characters) so multibyte payloads are accounted for accurately. A value of 0 or less disables the bloat-aware trigger, leaving only the token-count threshold. |
 | `circuitBreakerCooldownSeconds` | int | 600 | How long the per-session compaction circuit breaker stays open after repeated failures before retrying. |
 | `cronLlmIdleTimeoutMs` | int | 60000 (60s) | Stream-setup idle cap (milliseconds) applied to the compaction summarization model call when the resolved candidate is a **cloud** provider. Wires the first-token watchdog so a cloud model that stalls mid-stream (or never emits a first token) is aborted early, well inside the per-attempt `timeoutSeconds` window, so the model fallback chain can still try the next candidate. Intentionally **not** applied to local/self-hosted providers (localhost / 127.0.0.1 - e.g. ollama, vllm, lmstudio, sglang), which are legitimately slow to warm up. A value of 0 or less disables the cap entirely. |
+
+Existing configurations that omit `preservedTailTokens` use the 12000-token default. Small
+tails retain the existing turn preference; tool-heavy turns can now be partially summarised.
+Completed tool-call/result groups are kept or folded together. Automatic compaction retains
+the latest user request verbatim, even when older tool results within that turn are folded.
+Unfinished tool groups and the context following their start are mandatory, including when
+`preservedTurns` is zero. If mandatory entries alone exceed the budget, compaction reports
+`MandatoryContextExceedsBudget`, leaves history unchanged and uses the existing failure
+circuit breaker. Reduce the active input or deliberately raise the budget through the CLI;
+raising it leaves less space for new work. This is a working-tail estimate, not a hard cap on
+the entire provider request: the summary and system/tool overhead consume additional tokens.
+
+Compaction keeps original transcript entries in storage and marks folded entries as historical.
+Retained typed tool-start/result pairs are restored as complete exchanges after compaction,
+both within a running handle and when it is recreated. Unfinished, duplicate or malformed typed
+tool evidence blocks a provider refresh rather than fabricating a result. Legacy tool rows
+without typed pairing metadata retain the existing cold-resume filtering behavior.
+After successful live-context replacement, an unchanged file read returns its content again;
+repeat reads within unchanged context still use compact notices after checking the on-disk token.
 
 The section is optional - when absent, the defaults above apply. The bloat-aware trigger complements [Tool Result Persistence](#tool-result-persistence): write-time truncation prevents most oversized entries from ever being persisted, while the bloat-aware trigger ensures any already-accumulated (or un-capped) large entry still becomes eligible for summarisation.
 

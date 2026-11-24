@@ -316,6 +316,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         if (reason == CompactionSkipReason.NoSummarizableTurns)
             return "Compaction skipped: no summarizable turns were found. Session history was not modified.";
 
+        if (reason == CompactionSkipReason.MandatoryContextExceedsBudget)
+            return "Compaction aborted: the active request or unfinished tool groups exceed the preserved-context token budget. Session history was not modified.";
+
         if (reason == CompactionSkipReason.SummarizationTimeout)
             return "Compaction aborted: the summarization call timed out. Session history was not modified.";
 

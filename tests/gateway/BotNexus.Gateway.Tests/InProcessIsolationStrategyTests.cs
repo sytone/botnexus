@@ -499,6 +499,94 @@ public sealed class InProcessIsolationStrategyTests
             false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()), Times.Once);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CreateAsync_CompactedTypedToolGroups_RestoreOrFailClosed(bool midLoop, bool unfinishedTool)
+    {
+        var session = new GatewaySession { SessionId = SessionId.From("retained-tools"), AgentId = AgentId.From("agent-a") };
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.System, Content = "Earlier work is summarized.", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "Continue investigating." },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "a", ToolArgs = "{\"path\":\"a.cs\"}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "b", ToolArgs = "{\"path\":\"b.cs\"}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "source b", ToolName = "read", ToolCallId = "b", Kind = MessageKind.ToolResult },
+            new SessionEntry { Role = MessageRole.Tool, Content = "source a", ToolName = "read", ToolCallId = "a", Kind = MessageKind.ToolResult }
+        });
+        if (unfinishedTool)
+            session.ReplaceHistory(session.GetHistorySnapshot().Where(entry => entry.ToolCallId != "a" || entry.Kind != MessageKind.ToolResult).ToArray());
+        var store = new Mock<ISessionStore>();
+        store.Setup(value => value.GetAsync(session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>())).Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
+            false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()))
+            .ReturnsAsync(new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 10, 5, 20000, 2000, null));
+        var services = new ServiceCollection();
+        services.AddSingleton(store.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+        using var serviceProvider = services.BuildServiceProvider();
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: serviceProvider);
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = session.SessionId,
+            History = midLoop ? [] : session.GetHistorySnapshot()
+        });
+        IReadOnlyList<AgentMessage> messages;
+        if (midLoop)
+        {
+            var hook = GetAgentOptions(handle).ContextCompactionService.ShouldNotBeNull();
+            if (unfinishedTool)
+            {
+                var previous = GetMessages(handle).ToArray();
+                var failure = await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None));
+                failure.Message.ShouldContain("restore retained tool evidence");
+                GetMessages(handle).ShouldBe(previous);
+                return;
+            }
+            var replacement = (await hook(CancellationToken.None)).ShouldNotBeNull();
+            replacement.SystemPrompt.ShouldNotBeNull().ShouldContain("Earlier work is summarized.");
+            messages = replacement.Messages;
+        }
+        else
+        {
+            messages = GetMessages(handle);
+        }
+
+        messages.OfType<ToolResultAgentMessage>().Select(message => message.ToolCallId).Order()
+            .ShouldBe(new[] { "a", "b" });
+        var calls = messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? []).ToArray();
+        calls.Select(call => call.Id).Order().ShouldBe(new[] { "a", "b" });
+        calls.Single(call => call.Id == "a").Arguments["path"]?.ToString().ShouldBe("a.cs");
+        messages.OfType<ToolResultAgentMessage>().Single(message => message.ToolCallId == "a")
+            .Result.Content.Single().Value.ShouldBe("source a");
+        messages.OfType<AgentCoreUserMessage>().Single().Content.ShouldBe("Continue investigating.");
+        var openCalls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var message in messages)
+        {
+            if (message is AssistantAgentMessage assistant)
+            {
+                openCalls.ShouldBeEmpty();
+                foreach (var call in assistant.ToolCalls ?? [])
+                    openCalls.Add(call.Id).ShouldBeTrue();
+            }
+            if (message is ToolResultAgentMessage tool)
+                openCalls.Remove(tool.ToolCallId).ShouldBeTrue();
+        }
+        openCalls.ShouldBeEmpty();
+        var providerMessages = await BotNexus.Agent.Core.ExtensionPoints.Messages.DefaultProviderMessageTransformer
+            .TransformAsync(messages, CancellationToken.None);
+        providerMessages.OfType<AssistantMessage>().SelectMany(message => message.Content.OfType<ToolCallContent>())
+            .Select(call => call.Id).Order().ShouldBe(new[] { "a", "b" });
+        providerMessages.OfType<ToolResultMessage>().Select(message => message.ToolCallId).Order()
+            .ShouldBe(new[] { "a", "b" });
+    }
+
     [Fact]
     public async Task CreateAsync_CeilingFreshEachLoopAndFailuresAreClosed()
     {

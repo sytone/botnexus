@@ -134,6 +134,7 @@ public static class GatewayServiceCollectionExtensions
                 var configuredCompaction = new CompactionOptions
                 {
                     PreservedTurns = ParseInt(compactionSection["preservedTurns"], new CompactionOptions().PreservedTurns),
+                    PreservedTailTokens = ParseInt(compactionSection["preservedTailTokens"], new CompactionOptions().PreservedTailTokens),
                     MaxSummaryChars = ParseInt(compactionSection["maxSummaryChars"], new CompactionOptions().MaxSummaryChars),
                     TokenThresholdRatio = ParseDouble(compactionSection["tokenThresholdRatio"], new CompactionOptions().TokenThresholdRatio),
                     ContextWindowTokens = ParseInt(compactionSection["contextWindowTokens"], new CompactionOptions().ContextWindowTokens),

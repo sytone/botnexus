@@ -14,12 +14,32 @@ using BotNexus.Gateway.Extensions;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Memory;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Tests;
 
 public sealed class PlatformConfigurationTests
 {
+    [Theory]
+    [InlineData(null, 12000)]
+    [InlineData("24000", 24000)]
+    public void AddBotNexusGateway_PreservedTailTokens_BindsConfiguredValueOrDefault(string? configured, int expected)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:compaction:preservedTurns"] = "3",
+            ["gateway:compaction:preservedTailTokens"] = configured
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        provider.GetRequiredService<IOptions<CompactionOptions>>().Value.PreservedTailTokens.ShouldBe(expected);
+        provider.GetRequiredService<IOptionsMonitor<CompactionOptions>>().CurrentValue.PreservedTailTokens.ShouldBe(expected);
+    }
+
     [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenFileMissing_ReturnsDefaultConfig()
     {
@@ -715,6 +735,7 @@ public sealed class PlatformConfigurationTests
                 Compaction = new CompactionOptions
                 {
                     PreservedTurns = 5,
+                    PreservedTailTokens = 24000,
                     MaxSummaryChars = 2000,
                     TokenThresholdRatio = 0.4,
                     ContextWindowTokens = 64000,
@@ -732,6 +753,7 @@ public sealed class PlatformConfigurationTests
         var compaction = provider.GetRequiredService<IOptions<CompactionOptions>>().Value;
 
         compaction.PreservedTurns.ShouldBe(5);
+        compaction.PreservedTailTokens.ShouldBe(24000);
         compaction.MaxSummaryChars.ShouldBe(2000);
         compaction.TokenThresholdRatio.ShouldBe(0.4);
         compaction.ContextWindowTokens.ShouldBe(64000);
