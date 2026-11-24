@@ -343,6 +343,58 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task CompactAsync_LowerLiveCeiling_ShrinksAnOversizedPriorSummaryOnlyOnce()
+    {
+        var session = CreateSession();
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.System,
+            IsCompactionSummary = true,
+            Content = new string('s', 40_000)
+        });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Continue investigating." });
+        var compactor = CreateCompactor("Reference: artifact://build/42.");
+        var options = new CompactionOptions
+        {
+            CompactionTokenCeiling = 5_000,
+            SummarizationModel = TestModel.Id
+        };
+
+        var first = await compactor.CompactAsync(session, options);
+
+        first.Succeeded.ShouldBeTrue();
+        first.TokensAfter.ShouldBeLessThan(CompactionThreshold.Resolve(options));
+        session.ReplaceHistory(first.CompactedHistory.ShouldNotBeNull());
+        var second = await compactor.CompactAsync(session, options);
+        second.Succeeded.ShouldBeFalse();
+        second.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
+    }
+
+    [Fact]
+    public async Task CompactAsync_AutomaticPressureWithAnExpandingSummary_DoesNotClaimSuccess()
+    {
+        var session = CreateSession(
+            ("user", "Earlier task."),
+            ("assistant", "Some previous findings."),
+            ("user", new string('a', 4_800)));
+        var original = session.GetHistorySnapshot().ToArray();
+        var compactor = CreateCompactor(new string('s', 4_000));
+        var options = new CompactionOptions
+        {
+            PreservedTurns = 1,
+            CompactionTokenCeiling = 500,
+            SummarizationModel = TestModel.Id
+        };
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue();
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeFalse();
+        result.SkipReason.ShouldBe(CompactionSkipReason.FromString("NoContextReduction"));
+        session.GetHistorySnapshot().ShouldBe(original);
+    }
+
+    [Fact]
     public async Task CompactAsync_OnlySummaryAndActiveRequestRemain_DoesNotRepeatAnIneffectiveCut()
     {
         var session = CreateSession(("user", "Keep investigating."));

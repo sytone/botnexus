@@ -2222,6 +2222,13 @@ public sealed partial class GatewayHostTests
         session.History.ShouldContain(
             e => e.Role.Equals(MessageRole.Notification) && e.Content != null && e.Content.Contains("did not complete"),
             "abandoned-turn detection must add a notification entry when a prior turn stalled mid-tool (#790)");
+        session.History.Single(e => e.ToolCallId == "call-1").IsHistory.ShouldBeTrue(
+            "an interrupted call must not pin every subsequent turn in the working context");
+        session.History.ShouldContain(e => e.Role == MessageRole.Assistant
+            && e.Content != null && e.Content.Contains("call-1") && e.Content.Contains("unknown")
+            && e.Content.Contains("{}"));
+        session.History.ShouldNotContain(e => e.Kind == MessageKind.ToolResult,
+            "host recovery must not invent a tool result");
     }
 
     [Fact]
