@@ -41,6 +41,26 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
+    public void AddBotNexusGateway_CompactionConfigurationReload_UpdatesTheActivePolicy()
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:compaction:preservedTailTokens"] = "12000"
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway(configuration);
+        using var provider = services.BuildServiceProvider();
+        var monitor = provider.GetRequiredService<IOptionsMonitor<CompactionOptions>>();
+        monitor.CurrentValue.PreservedTailTokens.ShouldBe(12_000);
+
+        configuration["gateway:compaction:preservedTailTokens"] = "2400";
+        configuration.Reload();
+
+        monitor.CurrentValue.PreservedTailTokens.ShouldBe(2_400);
+    }
+
+    [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenFileMissing_ReturnsDefaultConfig()
     {
         var config = await PlatformConfigLoader.LoadAsync(Path.Combine(Guid.NewGuid().ToString("N"), "missing.json"));

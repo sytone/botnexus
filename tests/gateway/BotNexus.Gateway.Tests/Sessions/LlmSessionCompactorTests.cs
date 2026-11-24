@@ -29,6 +29,44 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         MaxTokens: 4096);
 
     [Fact]
+    public async Task CompactAsync_ZeroTurnPreference_PreservesActiveRequestDuringAutomaticCompaction()
+    {
+        var session = CreateSession(("user", "Keep investigating artifact://build/42."));
+        AddToolPairs(session, 10);
+
+        var result = await CreateCompactor("Earlier results are summarized.").CompactAsync(session, new CompactionOptions
+        {
+            PreservedTurns = 0,
+            SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        result.CompactedHistory.ShouldNotBeNull().ShouldContain(entry =>
+            entry.Role.Equals(MessageRole.User) && !entry.IsHistory &&
+            entry.Content == "Keep investigating artifact://build/42.");
+    }
+
+    [Fact]
+    public async Task CompactAsync_CeilingBelowDefaultTail_LeavesHeadroomInOneCut()
+    {
+        var session = CreateSession(("user", "Keep investigating."));
+        AddToolPairs(session, 60);
+        var compactor = CreateCompactor("Build evidence remains at artifact://build/42.");
+        var options = new CompactionOptions
+        {
+            CompactionTokenCeiling = 5_000,
+            SummarizationModel = TestModel.Id
+        };
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        result.TokensAfter.ShouldBeLessThan(CompactionThreshold.Resolve(options));
+        session.ReplaceHistory(result.CompactedHistory.ShouldNotBeNull());
+        compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task CompactAsync_SingleToolHeavyTurn_BoundsTailWithoutLosingIntentOrToolPairs()
     {
         var session = CreateSession(("user", "Inspect artifact://build/42 and fix the failing build."));

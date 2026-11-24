@@ -588,6 +588,39 @@ public sealed class InProcessIsolationStrategyTests
     }
 
     [Fact]
+    public async Task CreateAsync_CompactedHistoryWithInterruptedTool_RecoversWithoutInventingAResult()
+    {
+        var history = new[]
+        {
+            new SessionEntry { Role = MessageRole.System, Content = "Earlier work is summarized.", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "Inspect the build." },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "interrupted-read", ToolArgs = "{\"path\":\"build.log\"}", Kind = MessageKind.ToolStart
+            },
+            new SessionEntry { Role = MessageRole.User, Content = "Continue safely after the interruption." }
+        };
+        var strategy = CreateStrategyWithRegisteredModel();
+
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = SessionId.From("interrupted-compacted-session"),
+            History = history
+        });
+
+        var messages = GetMessages(handle);
+        messages.OfType<ToolResultAgentMessage>().ShouldBeEmpty();
+        messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? []).ShouldBeEmpty();
+        messages.OfType<AssistantAgentMessage>().ShouldContain(message =>
+            message.Content.Contains("interrupted-read", StringComparison.Ordinal) &&
+            message.Content.Contains("unknown", StringComparison.OrdinalIgnoreCase));
+        messages.OfType<AgentCoreUserMessage>().Last().Content.ShouldBe("Continue safely after the interruption.");
+        history.Length.ShouldBe(4);
+        history[2].IsHistory.ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task CreateAsync_CeilingFreshEachLoopAndFailuresAreClosed()
     {
         var session = new GatewaySession { SessionId = SessionId.From("ceiling-midloop"), AgentId = AgentId.From("agent-a"), ConversationId = ConversationId.From("ceiling-conversation") };
