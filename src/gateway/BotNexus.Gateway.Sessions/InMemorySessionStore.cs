@@ -63,6 +63,32 @@ public sealed partial class InMemorySessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override async Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+        AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+        cancellationToken.ThrowIfCancellationRequested();
+        HashSet<ConversationId>? owned = null;
+        if (_conversationStore is not null)
+        {
+            var ownership = await _conversationStore.ListOwnershipAsync(agentId, cancellationToken).ConfigureAwait(false);
+            owned = ownership.Where(item => item.AgentId == agentId)
+                .Select(item => item.ConversationId).ToHashSet();
+        }
+
+        lock (_sync)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            return _sessions.Values
+                .Where(session => session.SessionId.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal))
+                .Where(session => owned is null
+                    ? session.AgentId == agentId
+                    : session.ConversationId.IsInitialized() && owned.Contains(session.ConversationId))
+                .Select(session => session.SessionId).ToList();
+        }
+    }
+
+    /// <inheritdoc />
     public override Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken cancellationToken = default)
     {
         using var activity = ActivitySource.StartActivity("session.get_or_create", ActivityKind.Internal);

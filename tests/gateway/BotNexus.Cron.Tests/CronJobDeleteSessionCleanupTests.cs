@@ -90,6 +90,33 @@ public sealed class CronJobDeleteSessionCleanupTests
             It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
     }
 
+    [Fact]
+    public async Task DeleteJob_CancelledAfterOneSession_LeavesJobForRetry()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        using var cancellation = new CancellationTokenSource();
+        var attempts = 0;
+        var sessions = new FakeSessionStore
+        {
+            OnDelete = () =>
+            {
+                if (++attempts == 2)
+                    cancellation.Cancel();
+            }
+        };
+        sessions.Seed("agent-a", "cron:job-1:first");
+        sessions.Seed("agent-a", "cron:job-1:second");
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "test-action"));
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("test-action")], sessions);
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => scheduler.DeleteJobAsync(JobId.From("job-1"), cancellation.Token));
+
+        sessions.Deleted.ShouldBe([SessionId.From("cron:job-1:first")]);
+        sessions.SurvivingIds().ShouldBe(["cron:job-1:second"]);
+        (await context.Store.GetAsync(JobId.From("job-1"))).ShouldNotBeNull();
+    }
+
     // ── AC1 + AC3: the job's own cron sessions are deleted ────────────────────────
 
     [Fact]
