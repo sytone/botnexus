@@ -31,14 +31,28 @@ public sealed record ReadResultDetails(string? ConcurrencyToken);
 /// <param name="RenderedLength">Character length of the slice that was returned to the model.</param>
 internal sealed record PreviousRead(string ContentToken, int RenderedLength);
 
-
 /// <summary>
 /// Represents read tool.
 /// </summary>
-public sealed class ReadTool : IAgentTool
+public sealed class ReadTool : IAgentTool, IContextReplacementAwareTool
 {
     private const int MaxOutputLines = 2000;
     private const int MaxOutputBytes = 50 * 1024;
+    private readonly record struct ReadSliceKey(string Path, int Offset, int? Limit);
+
+    private sealed class ReadSliceKeyComparer(StringComparer pathComparer) : IEqualityComparer<ReadSliceKey>
+    {
+        public bool Equals(ReadSliceKey x, ReadSliceKey y)
+            => pathComparer.Equals(x.Path, y.Path)
+               && x.Offset == y.Offset
+               && x.Limit == y.Limit;
+
+        public int GetHashCode(ReadSliceKey key)
+            => HashCode.Combine(pathComparer.GetHashCode(key.Path), key.Offset, key.Limit);
+    }
+
+    private static readonly IEqualityComparer<ReadSliceKey> SliceKeyComparer =
+        new ReadSliceKeyComparer(OperatingSystem.IsWindows() ? StringComparer.OrdinalIgnoreCase : StringComparer.Ordinal);
     private readonly string _workingDirectory;
     private readonly IPathValidator? _validator;
     private readonly IFileSystem _fileSystem;
@@ -49,8 +63,8 @@ public sealed class ReadTool : IAgentTool
     /// because the tool instance is created once per agent handle (#2689). Concurrent tool calls
     /// within one session are possible, so the map is concurrent.
     /// </summary>
-    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, PreviousRead> _previousReads =
-        new(StringComparer.Ordinal);
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<ReadSliceKey, PreviousRead> _previousReads =
+        new(SliceKeyComparer);
 
     public ReadTool(string workingDirectory, IFileSystem? fileSystem = null)
         : this(workingDirectory, validator: null, fileSystem)
@@ -226,8 +240,14 @@ public sealed class ReadTool : IAgentTool
         throw new FileNotFoundException($"Path '{relativePath}' does not exist.", resolvedPath);
     }
 
-    private static string BuildSliceKey(string resolvedPath, int offset, int? limit)
-        => $"{resolvedPath.ToUpperInvariant()}|{offset}|{limit?.ToString() ?? "*"}";
+    private static ReadSliceKey BuildSliceKey(string resolvedPath, int offset, int? limit)
+        => new(resolvedPath, offset, limit);
+
+    /// <summary>
+    /// Forgets which file slices were visible before a durable context replacement so subsequent
+    /// reads restore their content to the model after compaction.
+    /// </summary>
+    public void OnContextReplaced() => _previousReads.Clear();
 
     private static string BuildUnchangedNotice(string relativePath, int renderedLength, int offset, int? limit)
     {

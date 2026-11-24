@@ -26,6 +26,8 @@
     <FrameworkReference Include="Microsoft.AspNetCore.App" />
   </ItemGroup>
   <ItemGroup>
+    <ProjectReference Include="..\..\..\src\agent\BotNexus.Agent.Core\BotNexus.Agent.Core.csproj" />
+    <ProjectReference Include="..\..\..\src\gateway\BotNexus.Tools\BotNexus.Tools.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway\BotNexus.Gateway.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Sessions\BotNexus.Gateway.Sessions.csproj" />
     <ProjectReference Include="..\..\..\src\gateway\BotNexus.Gateway.Api\BotNexus.Gateway.Api.csproj" />
