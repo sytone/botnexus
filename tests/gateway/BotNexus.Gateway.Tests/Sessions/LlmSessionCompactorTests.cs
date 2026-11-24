@@ -276,6 +276,8 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         long baselineSummaryInput = 0, candidateSummaryInput = 0;
         var baselineCuts = 0;
         var candidateCuts = 0;
+        var baselineLastCut = 0;
+        var candidateLastCut = 0;
         var compactor = CreateCompactorCapturingPrompt(summary,
             prompt => candidateSummaryInput += BotNexus.Domain.Text.TokenEstimator.EstimateTokens(prompt));
         var options = new CompactionOptions
@@ -294,6 +296,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
             AddToolPairs(candidate, 1, step);
             if (compactor.ShouldCompact(baseline.Session, options))
             {
+                var tokensBefore = LlmSessionCompactor.EstimateVisibleTokenCount(baseline.Session);
                 // Reference the pre-#5182 turn-only split and its decreasing-turn fallback.
                 // Both policies use identical inputs, formatter, threshold and summary text.
                 var visible = baseline.GetHistorySnapshot().ToArray();
@@ -316,6 +319,11 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
                         IsCompactionSummary = true
                     }
                 }.Concat(visible.Skip(cut)).ToArray());
+                output.WriteLine(
+                    "matched baseline step={0}; interval={1}; before={2}; after={3}; summarized={4}; preserved={5}",
+                    step, step - baselineLastCut, tokensBefore,
+                    LlmSessionCompactor.EstimateVisibleTokenCount(baseline.Session), folded.Count, visible.Length - cut);
+                baselineLastCut = step;
                 baselineCuts++;
             }
             if (compactor.ShouldCompact(candidate.Session, options))
@@ -324,6 +332,11 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
                 result.Succeeded.ShouldBeTrue();
                 candidate.ReplaceHistory(result.CompactedHistory.ShouldNotBeNull());
                 compactor.ShouldCompact(candidate.Session, options).ShouldBeFalse();
+                output.WriteLine(
+                    "matched bounded step={0}; interval={1}; before={2}; after={3}; summarized={4}; preserved={5}",
+                    step, step - candidateLastCut, result.TokensBefore, result.TokensAfter,
+                    result.EntriesSummarized, result.EntriesPreserved);
+                candidateLastCut = step;
                 candidateCuts++;
             }
             baselineHistoryInput += LlmSessionCompactor.EstimateVisibleTokenCount(baseline.Session);
