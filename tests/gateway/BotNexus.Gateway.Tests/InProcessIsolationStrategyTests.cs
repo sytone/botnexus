@@ -609,6 +609,40 @@ public sealed class InProcessIsolationStrategyTests
     }
 
     [Fact]
+    public async Task CreateAsync_ReusedToolCallIds_ReplaysEachCompletedExchange()
+    {
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.System, Content = "Earlier work.", IsCompactionSummary = true },
+            new() { Role = MessageRole.User, Content = "Inspect both files." }
+        };
+        for (var i = 0; i < 2; i++)
+        {
+            history.Add(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "reused", ToolArgs = $"{{\"path\":\"{i}.cs\"}}", Kind = MessageKind.ToolStart
+            });
+            history.Add(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = $"source {i}", ToolName = "read",
+                ToolCallId = "reused", Kind = MessageKind.ToolResult
+            });
+        }
+        var strategy = CreateStrategyWithRegisteredModel();
+
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = SessionId.From("reused-tool-identities"), History = history
+        });
+
+        GetMessages(handle).OfType<ToolResultAgentMessage>()
+            .Select(message => message.Result.Content.Single().Value).ShouldBe(["source 0", "source 1"]);
+        GetMessages(handle).OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? [])
+            .Select(call => call.Arguments["path"]?.ToString()).ShouldBe(["0.cs", "1.cs"]);
+    }
+
+    [Fact]
     public async Task CreateAsync_CompactedHistoryWithInterruptedTool_RecoversWithoutInventingAResult()
     {
         var history = new[]

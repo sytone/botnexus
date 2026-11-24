@@ -343,6 +343,35 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task CompactAsync_ReusedCallIdentity_DoesNotMistakeAnOldResultForAPendingCall()
+    {
+        var session = CreateSession(("user", "Earlier task."));
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "reused",
+            ToolArgs = "{}", Kind = MessageKind.ToolStart
+        });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "earlier result", ToolName = "read",
+            ToolCallId = "reused", Kind = MessageKind.ToolResult
+        });
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Current task." });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "reused",
+            ToolArgs = "{}", Kind = MessageKind.ToolStart
+        });
+        AddToolPairs(session, 10);
+
+        var result = await CreateCompactor("summary").CompactAsync(session,
+            new CompactionOptions { PreservedTailTokens = 100, SummarizationModel = TestModel.Id });
+
+        result.Succeeded.ShouldBeFalse();
+        result.SkipReason.ShouldBe(CompactionSkipReason.MandatoryContextExceedsBudget);
+    }
+
+    [Fact]
     public async Task CompactAsync_LowerLiveCeiling_ShrinksAnOversizedPriorSummaryOnlyOnce()
     {
         var session = CreateSession();
