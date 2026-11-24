@@ -87,6 +87,11 @@ jobs:
       - name: Build
         run: dotnet build dirs.proj --no-restore
 
+      - name: Provision file watcher capacity
+        # Match the Azure runner: configuration integration fixtures need more than Linux's
+        # 128 per-user inotify instances. This changes runner capacity, not test scope.
+        run: sudo sysctl -w fs.inotify.max_user_instances=8192 fs.inotify.max_user_watches=524288
+
       # Canonical CORE scope consumed by Invoke-BoundedCoreTests.ps1:
       # FullyQualifiedName!~BotNexus.Integration.E2E&FullyQualifiedName!~BotNexus.E2E
       - name: Test (core)
