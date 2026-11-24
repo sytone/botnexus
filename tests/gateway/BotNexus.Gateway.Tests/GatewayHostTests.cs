@@ -2257,6 +2257,47 @@ public sealed partial class GatewayHostTests
     }
 
     [Fact]
+    public async Task DispatchAsync_AmbiguousToolEvidence_DoesNotRecoverAnInventedPairing()
+    {
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From("ambiguous-recovery"), AgentId = AgentId.From("agent-a")
+        };
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Inspect the files." });
+        foreach (var path in new[] { "a.cs", "b.cs" })
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "ambiguous", ToolArgs = $"{{\"path\":\"{path}\"}}", Kind = MessageKind.ToolStart
+            });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "source of unknown invocation",
+            ToolName = "read", ToolCallId = "ambiguous", Kind = MessageKind.ToolResult
+        });
+        var router = new Mock<IMessageRouter>();
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetOrCreateAsync(session.SessionId, session.AgentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePromptHandle("agent-a", "ambiguous-recovery", "response").Object);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager());
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await host.DispatchAsync(CreateMessage("Continue.", sessionId: "ambiguous-recovery")));
+
+        error.Message.ShouldContain("ambiguous");
+        session.History.Where(entry => entry.IsToolStartRow()).ShouldAllBe(entry => !entry.IsHistory);
+        session.History.ShouldNotContain(entry => entry.ToolIsIncomplete);
+        supervisor.Verify(value => value.GetOrCreateAsync(session.AgentId, session.SessionId,
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task StreamEvents_PublishGenericConversationEvents_ForObserverBindings()
     {
         var sink = new LegacyObserverCapturingSink();

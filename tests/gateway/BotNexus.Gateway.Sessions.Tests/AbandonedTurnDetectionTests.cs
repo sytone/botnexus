@@ -135,6 +135,19 @@ public sealed class AbandonedTurnDetectionTests
     }
 
     [Fact]
+    public void AmbiguousOverlappingStarts_CannotBeRecoveredByDiscardingOneStart()
+    {
+        var history = new List<SessionEntry>
+        {
+            User("request"), ToolStart(), ToolStart(), ToolEnd(), User("continue")
+        };
+
+        Should.Throw<InvalidOperationException>(() => SessionContextProjector.DetectAbandonedTurn(history))
+            .Message.ShouldContain("ambiguous");
+        history.Where(entry => entry.IsToolStartRow()).ShouldAllBe(entry => !entry.IsHistory);
+    }
+
+    [Fact]
     public void OlderDanglingToolCall_RemainsRecoverableAfterAdditionalTurns()
     {
         var history = new List<SessionEntry>
