@@ -442,7 +442,8 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
             ("assistant", "Some previous findings."),
             ("user", new string('a', 4_800)));
         var original = session.GetHistorySnapshot().ToArray();
-        var compactor = CreateCompactor(new string('s', 4_000));
+        var calls = 0;
+        var compactor = CreateCompactorCapturingPrompt(new string('s', 4_000), _ => calls++);
         var options = new CompactionOptions
         {
             PreservedTurns = 1,
@@ -456,6 +457,29 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         result.Succeeded.ShouldBeFalse();
         result.SkipReason.ShouldBe(CompactionSkipReason.FromString("NoContextReduction"));
         session.GetHistorySnapshot().ShouldBe(original);
+        calls.ShouldBe(0, "do not buy a summary when even its prefix and mandatory tail cannot reduce context");
+    }
+
+    [Fact]
+    public async Task CompactAsync_GeneratedSummaryExpandsOtherwiseReducibleContext_PreservesUsageAndHistory()
+    {
+        var session = CreateSession(
+            ("user", "Earlier task."),
+            ("assistant", new string('a', 4_000)),
+            ("user", "Continue."));
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 999_306;
+        var original = session.GetHistorySnapshot().ToArray();
+        var calls = 0;
+        var compactor = CreateCompactorCapturingPrompt(new string('s', 8_000), _ => calls++);
+
+        var result = await compactor.CompactAsync(session,
+            new CompactionOptions { PreservedTurns = 1, SummarizationModel = TestModel.Id });
+
+        result.Succeeded.ShouldBeFalse();
+        result.SkipReason.ShouldBe(CompactionSkipReason.NoContextReduction);
+        session.GetHistorySnapshot().ShouldBe(original);
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(999_306);
+        calls.ShouldBe(1);
     }
 
     [Fact]
