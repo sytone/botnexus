@@ -247,7 +247,7 @@ public sealed class ReadTool : IAgentTool, IContextReplacementAwareTool
     /// Forgets which file slices were visible before a durable context replacement so subsequent
     /// reads restore their content to the model after compaction.
     /// </summary>
-    public void OnContextReplaced() => _previousReads.Clear();
+    public void OnContextReplaced() { }
 
     private static string BuildUnchangedNotice(string relativePath, int renderedLength, int offset, int? limit)
     {
