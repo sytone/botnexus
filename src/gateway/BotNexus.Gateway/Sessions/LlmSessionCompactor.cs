@@ -209,6 +209,16 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     internal const int MinScaledPreservedTurns = 2;
 
     /// <summary>
+    /// Plans in local-estimate units while the trigger may use provider counts. Reuse the
+    /// bounded ratio calibration so one noisy previous request cannot erase the working tail.
+    /// </summary>
+    internal static int ResolvePostCompactionTargetTokens(CompactionOptions options, CompactionTokenMeasurement measurement)
+    {
+        var scale = Math.Clamp(measurement.Ratio ?? 1.0, 1.0, MaxProviderRatioScale);
+        return Math.Max(1, (int)Math.Floor(CompactionThreshold.Resolve(options) / (2 * scale)));
+    }
+
+    /// <summary>
     /// #2522 unit normalisation: the compaction trigger fires in one unit (provider prompt tokens,
     /// which include the system prompt, tool schemas and workspace-injected files) while the split
     /// walk plans the retained tail in another (the local script-weighted estimate over LLM-visible entries).
@@ -491,7 +501,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
         // Aim halfway below the trigger, charging the summary prefix and reserving a third
         // for the handoff. This adaptive optional budget must never displace mandatory context.
-        var targetTokens = Math.Max(1, CompactionThreshold.Resolve(options) / 2);
+        var targetTokens = ResolvePostCompactionTargetTokens(options, planMeasurement);
         var prefixTokens = EstimateVisibleTokenCountFromEntries(
             [new SessionEntry { Role = MessageRole.System, Content = SummaryPrefix + "\n" }]);
         var tailBudget = Math.Min(options.PreservedTailTokens,

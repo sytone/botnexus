@@ -1476,7 +1476,9 @@ raising it leaves less space for new work. This is a working-tail estimate, not 
 the entire provider request: the summary and system/tool overhead consume additional tokens.
 
 The cut targets approximately half the effective trigger, rather than always retaining the
-full 12000-token allowance. It reserves space for the summary prefix and handoff, trims optional
+full 12000-token allowance. When provider usage exceeds the local estimate, the local target
+is reduced using the existing bounded calibration (at most 4x); it is still an estimate, not
+a substitute for provider measurements. It reserves space for the summary prefix and handoff, trims optional
 tail entries first, and reduces the summary character allowance to fit the remaining estimate.
 The summarization request also has an output-token limit bounded by that allowance and the
 summary model's output limit. Mandatory context is never dropped to meet this adaptive target.
@@ -1501,6 +1503,10 @@ The section is optional - when absent, the defaults above apply. The bloat-aware
 ##### Scoped context windows
 
 `gateway.compaction.policySource` makes inheritance intentional:
+
+**Compatibility:** existing configurations without `policySource` now select `Configured`.
+If you previously relied on conversation working-window or ceiling overrides taking precedence,
+explicitly select `Conversation` to keep that behavior. No stored values are deleted or rewritten.
 
 - **`Configured` (default):** an explicit gateway ceiling wins. Otherwise an agent ceiling,
   then a local-world ceiling supplies the configured trigger. With no selected ceiling, use

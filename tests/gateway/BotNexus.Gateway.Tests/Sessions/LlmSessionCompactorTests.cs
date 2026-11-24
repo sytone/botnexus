@@ -67,6 +67,24 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task CompactAsync_ProviderPressure_NormalizesThePostCutTarget()
+    {
+        var session = CreateSession(("user", "Keep investigating."));
+        AddToolPairs(session, 60);
+        var before = LlmSessionCompactor.EstimateVisibleTokenCount(session.Session);
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = before * 4;
+        var options = new CompactionOptions { CompactionTokenCeiling = 5000, SummarizationModel = TestModel.Id };
+
+        var result = await CreateCompactor("Evidence remains at artifact://build/42.").CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        (result.TokensAfter * 4).ShouldBeLessThan(2500,
+            "the adaptive target must account for the provider/estimate scale used by token pressure");
+        result.CompactedHistory.ShouldNotBeNull().ShouldContain(entry =>
+            entry.Role.Equals(MessageRole.User) && !entry.IsHistory && entry.Content == "Keep investigating.");
+    }
+
+    [Fact]
     public async Task CompactAsync_SmallCeiling_BoundsTheSummarizationRequestOutput()
     {
         var session = CreateSession(("user", "Continue investigating."));

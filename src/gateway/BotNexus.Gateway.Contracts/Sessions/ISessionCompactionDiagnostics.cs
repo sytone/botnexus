@@ -24,7 +24,7 @@ public sealed record CompactionPolicyDiagnostics
     public int ConfiguredContextWindowTokens { get; init; }
     /// <summary>Configured maximum verbatim tail; the adaptive cut may retain less.</summary>
     public int PreservedTailTokens { get; init; }
-    /// <summary>Desired post-cut history estimate, subject to irreducible mandatory context.</summary>
+    /// <summary>Desired local history estimate, calibrated to provider pressure when available; mandatory context may exceed it.</summary>
     public int PostCompactionTargetTokens { get; init; }
     /// <summary>Current scoped working window; null when the resolver cannot establish one.</summary>
     public int? ScopedContextWindowTokens { get; init; }

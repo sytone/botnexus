@@ -50,7 +50,7 @@ public sealed class SessionCompactionDiagnostics(
             PolicySource = options.PolicySource,
             ConfiguredContextWindowTokens = options.ConfiguredWindowTokens ?? options.ContextWindowTokens,
             PreservedTailTokens = options.PreservedTailTokens,
-            PostCompactionTargetTokens = Math.Max(1, effectiveThreshold / 2),
+            PostCompactionTargetTokens = LlmSessionCompactor.ResolvePostCompactionTargetTokens(options, measurement),
             ScopedContextWindowTokens = scopedWindow,
             ContextWindowTokens = options.ContextWindowTokens,
             TokenThresholdRatio = options.TokenThresholdRatio,

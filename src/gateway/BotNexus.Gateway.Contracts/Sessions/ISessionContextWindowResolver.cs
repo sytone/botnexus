@@ -21,11 +21,10 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// <para>
 /// Resolution is asynchronous because the conversation override is a store read, while
 /// <c>ShouldCompact</c> is deliberately synchronous and pure. The seam is therefore applied by the
-/// (already asynchronous) callers, which narrow <see cref="CompactionOptions.ContextWindowTokens"/>
-/// to the scoped window before handing the options to the compactor. That keeps the compactor's
-/// arithmetic - and therefore <see cref="CompactionOptions.TokenThresholdRatio"/> semantics and the
-/// byte-based <see cref="CompactionOptions.LargestEntryBytesThreshold"/> bloat trigger - completely
-/// unchanged, and makes the behaviour for an agent with no scoped window identical to before.
+/// asynchronous callers, which preserve the configured policy window while applying resolved
+/// model capacity or the explicitly selected inherited working window. Shared
+/// <see cref="CompactionThreshold"/> arithmetic keeps pre-turn, mid-loop and diagnostic policy aligned.
+/// The byte-based <see cref="CompactionOptions.LargestEntryBytesThreshold"/> trigger is independent.
 /// </para>
 /// </remarks>
 public interface ISessionContextWindowResolver

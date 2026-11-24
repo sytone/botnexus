@@ -329,7 +329,7 @@ internal sealed partial class BuiltInCommandContributor(
         {
             sb.AppendLine($"Compaction policy source: {policy.PolicySource}");
             sb.AppendLine($"Configured policy window: {Fmt(policy.ConfiguredContextWindowTokens)} tokens");
-            sb.AppendLine($"Preserved tail limit: {Fmt(policy.PreservedTailTokens)} tokens; post-cut target: {Fmt(policy.PostCompactionTargetTokens)} tokens (mandatory context may exceed the target)");
+            sb.AppendLine($"Preserved tail limit: {Fmt(policy.PreservedTailTokens)} tokens; post-cut target: {Fmt(policy.PostCompactionTargetTokens)} local estimated tokens (mandatory context may exceed the target)");
             sb.AppendLine(contextWindowTokens is { } scopedWindow
                 ? $"Scoped working window: {Fmt(scopedWindow)} tokens"
                 : "Scoped working window: unavailable");

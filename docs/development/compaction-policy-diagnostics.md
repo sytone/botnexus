@@ -15,7 +15,7 @@ Each HTTP read resolves policy afresh through `ISessionCompactionDiagnostics`. T
 | `policySource` | `Configured` (default), `Conversation` or `Model`; inheritance is explicit. |
 | `configuredContextWindowTokens` | Operator window before resolving the model's real capacity; not a new capacity declaration. |
 | `preservedTailTokens` | Configured maximum retained verbatim estimate; adaptive cuts can retain less. |
-| `postCompactionTargetTokens` | Desired history estimate after cutting, approximately half the trigger. Mandatory context may make it irreducible. |
+| `postCompactionTargetTokens` | Desired local history estimate: half the trigger, reduced by bounded provider/estimate calibration when available. Mandatory context may make it irreducible. |
 | `scopedContextWindowTokens` | Current working window returned by the context-window resolver. Null when scope cannot establish one. |
 | `contextWindowTokens` | Window used by runtime compaction policy. When scope is unknown, this is the configured compaction fallback, not a newly invented capacity. |
 | `tokenThresholdRatio` | Current configured fraction for the ratio safety threshold. |
