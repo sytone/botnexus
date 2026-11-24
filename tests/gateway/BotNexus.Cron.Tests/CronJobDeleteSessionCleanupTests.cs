@@ -4,6 +4,7 @@ using BotNexus.Gateway.Abstractions.Conversations;
 using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using Moq;
@@ -33,6 +34,61 @@ namespace BotNexus.Cron.Tests;
 public sealed class CronJobDeleteSessionCleanupTests
 {
     private static readonly DateTimeOffset Now = new(2026, 8, 1, 12, 0, 0, TimeSpan.Zero);
+
+    [Fact]
+    public async Task DeleteJob_QueriesOnlyOwnedSessionIds_WithoutListingAggregates()
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        var sessions = new FakeSessionStore();
+        sessions.Seed("agent-a", "cron:job-1:run");
+        sessions.Seed("agent-b", "cron:job-1:other-agent");
+        sessions.Seed("agent-a", "cron:job-10:other-job");
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "test-action"));
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("test-action")], sessions);
+
+        await scheduler.DeleteJobAsync(JobId.From("job-1"));
+
+        sessions.AggregateListCalls.ShouldBe(0);
+        sessions.IdQueries.ShouldBe([(AgentId.From("agent-a"), "cron:job-1:")]);
+        sessions.Deleted.ShouldBe([SessionId.From("cron:job-1:run")]);
+        sessions.SurvivingIds().ShouldBe(
+            ["cron:job-1:other-agent", "cron:job-10:other-job"], ignoreOrder: true);
+        (await context.Store.GetAsync(JobId.From("job-1"))).ShouldBeNull();
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DeleteJob_CallerCancelsCleanup_PropagatesWithoutClaimingDeletionContinues(bool duringDelete)
+    {
+        await using var context = await CronStoreTestContext.CreateAsync();
+        using var cancellation = new CancellationTokenSource();
+        var sessions = new FakeSessionStore
+        {
+            OnList = duringDelete ? null : cancellation.Cancel,
+            OnDelete = duringDelete ? cancellation.Cancel : null
+        };
+        sessions.Seed("agent-a", "cron:job-1:run");
+        await context.Store.CreateAsync(CronStoreTestContext.CreateJob("job-1", actionType: "test-action"));
+        var logger = new Mock<ILogger<CronScheduler>>();
+        var scheduler = CreateScheduler(context.Store, [new RecordingAction("test-action")], sessions, logger: logger.Object);
+
+        var exception = await Should.ThrowAsync<OperationCanceledException>(
+            () => scheduler.DeleteJobAsync(JobId.From("job-1"), cancellation.Token));
+
+        exception.CancellationToken.ShouldBe(cancellation.Token);
+        (await context.Store.GetAsync(JobId.From("job-1"))).ShouldNotBeNull();
+        sessions.Deleted.ShouldBeEmpty();
+        logger.Verify(log => log.Log(
+            It.IsAny<LogLevel>(), It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) => (state.ToString() ?? string.Empty).Contains("cancelled")
+                && (state.ToString() ?? string.Empty).Contains("job-1")),
+            It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Once);
+        logger.Verify(log => log.Log(
+            It.IsAny<LogLevel>(), It.IsAny<EventId>(),
+            It.Is<It.IsAnyType>((state, _) => (state.ToString() ?? string.Empty).Contains("delete continues")),
+            It.IsAny<Exception?>(), It.IsAny<Func<It.IsAnyType, Exception?, string>>()), Times.Never);
+    }
 
     // ── AC1 + AC3: the job's own cron sessions are deleted ────────────────────────
 
@@ -260,7 +316,8 @@ public sealed class CronJobDeleteSessionCleanupTests
         ICronStore store,
         IEnumerable<ICronAction> actions,
         ISessionStore sessionStore,
-        IConversationStore? conversationStore = null)
+        IConversationStore? conversationStore = null,
+        ILogger<CronScheduler>? logger = null)
     {
         var services = new ServiceCollection();
         services.AddSingleton(sessionStore);
@@ -272,7 +329,7 @@ public sealed class CronJobDeleteSessionCleanupTests
             actions,
             provider.GetRequiredService<IServiceScopeFactory>(),
             new StaticOptionsMonitor<CronOptions>(new CronOptions { Enabled = true, TickIntervalSeconds = 1 }),
-            NullLogger<CronScheduler>.Instance,
+            logger ?? NullLogger<CronScheduler>.Instance,
             new FixedTimeProvider(Now));
     }
 
@@ -328,6 +385,14 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         public int ListCalls { get; private set; }
 
+        public int AggregateListCalls { get; private set; }
+
+        public List<(AgentId Agent, string Prefix)> IdQueries { get; } = [];
+
+        public Action? OnList { get; init; }
+
+        public Action? OnDelete { get; init; }
+
         public Exception? ThrowOnDelete { get; init; }
 
         public Exception? ThrowOnList { get; init; }
@@ -356,6 +421,8 @@ public sealed class CronJobDeleteSessionCleanupTests
         public Task DeleteAsync(SessionId sessionId, CancellationToken cancellationToken = default)
         {
             DeleteAttempts.Add(sessionId.Value);
+            OnDelete?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
 
             if (ThrowOnDelete is not null)
                 throw ThrowOnDelete;
@@ -367,7 +434,10 @@ public sealed class CronJobDeleteSessionCleanupTests
 
         public Task<IReadOnlyList<GatewaySession>> ListAsync(AgentId? agentId = null, CancellationToken cancellationToken = default)
         {
+            AggregateListCalls++;
             ListCalls++;
+            OnList?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
             if (ThrowOnList is not null)
                 throw ThrowOnList;
 
@@ -375,6 +445,23 @@ public sealed class CronJobDeleteSessionCleanupTests
                 ? _sessions.Where(s => s.AgentId == id).ToList()
                 : _sessions.ToList();
             return Task.FromResult(result);
+        }
+
+        public Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+            AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+        {
+            IdQueries.Add((agentId, sessionIdPrefix));
+            ListCalls++;
+            OnList?.Invoke();
+            cancellationToken.ThrowIfCancellationRequested();
+            if (ThrowOnList is not null)
+                throw ThrowOnList;
+
+            return Task.FromResult<IReadOnlyList<SessionId>>(_sessions
+                .Where(session => session.AgentId == agentId
+                    && session.SessionId.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal))
+                .Select(session => session.SessionId)
+                .ToList());
         }
 
         public Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default)
