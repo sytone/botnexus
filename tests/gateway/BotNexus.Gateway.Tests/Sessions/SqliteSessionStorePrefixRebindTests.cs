@@ -1,5 +1,6 @@
 using BotNexus.Domain.Primitives;
 using BotNexus.Gateway.Abstractions.Models;
+using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Conversations;
 using BotNexus.Gateway.Sessions;
 using Microsoft.Data.Sqlite;
@@ -21,6 +22,41 @@ public sealed class SqliteSessionStorePrefixRebindTests : IDisposable
     {
         SqlitePoolCleanup.ClearPoolForConnectionString(ConnectionString);
         try { if (File.Exists(_dbPath)) File.Delete(_dbPath); } catch (IOException) { }
+    }
+
+    [Fact]
+    public async Task ListIdsByPrefixAsync_FiltersOwnershipAndLiteralOrdinalPrefix_WithoutReadingHistory()
+    {
+        var agent = AgentId.From("agent-a");
+        var otherAgent = AgentId.From("agent-b");
+        var owned = await CreateConversationAsync(agent, "owned");
+        var otherOwned = await CreateConversationAsync(otherAgent, "other");
+        var store = CreateStore();
+        await SeedAsync(store, "cron:job%_:first", agent, owned, historyCount: 1);
+        await SeedAsync(store, "cron:job%_:second", agent, owned, historyCount: 1);
+        await SeedAsync(store, "cron:jobXX:first", agent, owned, historyCount: 1);
+        await SeedAsync(store, "cron:job%_0:first", agent, owned, historyCount: 1);
+        await SeedAsync(store, "CRON:job%_:first", agent, owned, historyCount: 1);
+        await SeedAsync(store, "cron:job%_:other-agent", otherAgent, otherOwned, historyCount: 1);
+        await SeedAsync(store, "interactive-unrelated", agent, owned, historyCount: 3);
+        await ExecuteAsync("DROP TABLE session_history;");
+
+        var ids = await ((ISessionStore)store).ListIdsByPrefixAsync(agent, "cron:job%_:");
+
+        ids.Select(id => id.Value).ShouldBe(
+            ["cron:job%_:first", "cron:job%_:second"], ignoreOrder: true);
+        (await ((ISessionStore)store).ListIdsByPrefixAsync(agent, "cron:missing:")).ShouldBeEmpty();
+    }
+
+    [Fact]
+    public async Task ListIdsByPrefixAsync_PreCancelledToken_Throws()
+    {
+        using var cancellation = new CancellationTokenSource();
+        cancellation.Cancel();
+        ISessionStore store = CreateStore();
+
+        await Should.ThrowAsync<OperationCanceledException>(
+            () => store.ListIdsByPrefixAsync(AgentId.From("agent-a"), "cron:job:", cancellation.Token));
     }
 
     [Fact]
