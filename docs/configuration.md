@@ -1436,6 +1436,11 @@ safe way to know.
 
 #### Session Compaction
 
+No compaction-specific setup is needed for a configured model. Defaults use your configured
+policy, trigger above 76800 tokens on a model with at least 128000 tokens of capacity, and retain
+at most 12000 estimated verbatim tokens plus the summary. Smaller models lower the safety
+threshold automatically. The commands below are optional tuning examples, not activation steps.
+
 The `compaction` section tunes when and how a session's history is summarised to stay within the model's context window. Compaction is triggered when **either** of two signals trips (whichever fires first):
 
 - **Token-count threshold** — the estimated LLM-visible token total, or an available provider prompt-token count, exceeds `floor(contextWindowTokens × tokenThresholdRatio)`, bounded by the scoped token ceiling below when configured.
@@ -1485,16 +1490,25 @@ summary model's output limit. Mandatory context is never dropped to meet this ad
 If mandatory context and the prefix already consume the target, a warning explains that the
 target is irreducible; the normal handoff allowance remains, and the no-rewrite guard prevents
 repeatedly paying to rewrite only an unchanged summary. Raise the trigger or reduce active input.
+An oversized prior summary can be shortened once after you lower the live policy. Automatic
+token-pressure compaction reports `NoContextReduction` instead of claiming success when the
+generated handoff would leave the estimated context unchanged or larger. That outcome preserves
+history and the provider measurement, and counts toward the existing failure circuit breaker.
 These are estimated history savings, not a measured reduction in provider billing.
 
 Compaction keeps original transcript entries in storage and marks folded entries as historical.
 Retained typed tool-start/result pairs are restored as complete exchanges after compaction,
-both within a running handle and when it is recreated. Duplicate, orphaned or malformed typed
+both within a running handle and when it is recreated. Overlapping duplicate, orphaned or malformed typed
 tool evidence blocks a provider refresh rather than fabricating a result. On cold recovery,
 an interrupted tool call becomes an explicit unknown-outcome notice with its real arguments:
 there is no fabricated tool result and side effects must be checked before retrying.
 Unfinished evidence still blocks an in-flight provider refresh. Legacy tool rows
 without typed pairing metadata retain the existing cold-resume filtering behavior.
+Before preparing a new user turn, the host stops a stale handle and rechecks for genuine
+completions. Remaining interrupted starts become historical audit rows with host-attributed,
+unknown-outcome notices in working context. They no longer pin every future compaction tail.
+Calls pending in the current turn remain protected. Call identities reused in later completed
+exchanges are paired chronologically within their execution, never with an earlier result.
 After successful live-context replacement, an unchanged file read returns its content again;
 repeat reads within unchanged context still use compact notices after checking the on-disk token.
 
@@ -1522,6 +1536,8 @@ The actual registered model's capacity multiplied by the ratio is always an inde
 limit when known. A configured ceiling cannot enlarge that capacity. For example, with ratio
 0.6, a 50000-token configured trigger stays at 50000 on a 1M-token model, but is limited to
 19200 on a 32k-token model. Model selection itself is unchanged.
+This policy choice does not change the execution working window or suppress exhaustion notices
+for a conversation running under a smaller working-window override.
 
 To deliberately opt into inheritance or return to the default:
 

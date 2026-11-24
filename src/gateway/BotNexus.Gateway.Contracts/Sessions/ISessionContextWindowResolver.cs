@@ -42,6 +42,12 @@ public interface ISessionContextWindowResolver
     /// case the caller must keep <see cref="CompactionOptions.ContextWindowTokens"/> as configured.
     /// </returns>
     Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the execution working window with conversation-over-agent-over-model precedence.
+    /// Exhaustion reporting uses this independently of the policy that schedules compaction.
+    /// </summary>
+    Task<int?> ResolveWorkingWindowAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>

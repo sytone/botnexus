@@ -47,7 +47,15 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
     }
 
     /// <inheritdoc />
-    public async Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+    public Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+        => ResolveWindowAsync(agentId, conversationId, useCompactionPolicy: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<int?> ResolveWorkingWindowAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+        => ResolveWindowAsync(agentId, conversationId, useCompactionPolicy: false, cancellationToken);
+
+    private async Task<int?> ResolveWindowAsync(
+        AgentId agentId, ConversationId conversationId, bool useCompactionPolicy, CancellationToken cancellationToken)
     {
         var descriptor = TryGetDescriptor(agentId);
         var conversation = await TryGetConversationAsync(conversationId, cancellationToken).ConfigureAwait(false);
@@ -86,14 +94,14 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
                 : descriptor?.ContextWindow.HasValue == true ? "agent" : null,
             model.ToContextDeclarations());
         var source = _options?.CurrentValue.PolicySource ?? CompactionPolicySource.Configured;
-        var resolved = source == CompactionPolicySource.Conversation
+        var resolved = !useCompactionPolicy || source == CompactionPolicySource.Conversation
             ? budget.EffectiveWorkingBudgetTokens
             : budget.ModelContextWindowTokens;
         if (budget.ModelContextWindowTokens is { } capacity && resolved is { } working)
             resolved = Math.Min(working, capacity);
 
         _logger.LogDebug(
-            "Scoped compaction window for agent {AgentId} / conversation {ConversationId}: " +
+            "Scoped window for agent {AgentId} / conversation {ConversationId}: " +
             "conversationOverride {ConversationOverride}, agentWindow {AgentWindow}, modelWindow {ModelWindow} => {Resolved}.",
             agentId.Value,
             conversationId.Value,

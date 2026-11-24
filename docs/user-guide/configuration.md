@@ -786,6 +786,9 @@ The gateway warns after prolonged inactivity and verifies the runtime scheduler 
    ```
 
 **Compaction Settings:**
+No compaction-specific setup is required. The defaults compact automatically, protect your
+current request and bound the retained tool-heavy context; tune these only when needed.
+
 - `policySource`: `Configured` by default; explicitly choose `Conversation` for scoped inheritance or `Model` for model-based policy
 - `compactionTokenCeiling`: Explicit configured trigger in tokens; the actual model's safety limit still applies
 - `preservedTurns`: Preferred recent user turns to keep verbatim within the token budget
@@ -804,6 +807,10 @@ The cut targets roughly half the effective trigger, including estimated summary 
 than retaining the entire allowance after every cut. Mandatory context can make that target
 irreducible. Changes apply on the next policy check without restarting. Use `/context` to see
 the selected source, effective trigger, retained-tail limit and target.
+Lowering the policy can also shorten an oversized existing summary. A generated summary that
+would not reduce token-pressure context is rejected as `NoContextReduction`, preserving history.
+An abandoned tool call from an earlier turn is recovered as an unknown outcome, not kept
+pending forever and not presented as a successful result.
 
 ### Session Cleanup
 

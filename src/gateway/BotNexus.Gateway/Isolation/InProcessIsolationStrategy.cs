@@ -1223,22 +1223,23 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
     private static List<AgentMessage> ConvertCompactedHistoryToAgentMessages(
         IReadOnlyList<SessionEntry> history, bool recoverInterruptedTools = false)
     {
-        var visible = SessionContextProjector.ProjectForLiveContext(history);
-        var starts = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
-        var results = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
+        // Legacy rows lack the typed pairing evidence needed for safe provider replay.
+        var visible = SessionContextProjector.ProjectForLiveContext(history)
+            .Where(entry => entry.Role != MessageRole.Tool
+                || entry.Kind == MessageKind.ToolStart || entry.Kind == MessageKind.ToolResult).ToArray();
         foreach (var entry in visible.Where(entry => entry.Role.Equals(MessageRole.Tool)))
         {
-            if (entry.Kind != MessageKind.ToolStart && entry.Kind != MessageKind.ToolResult)
-                continue; // Legacy rows lack the typed pairing evidence needed for safe replay.
             if (string.IsNullOrEmpty(entry.ToolCallId))
                 throw new InvalidOperationException("Retained typed tool evidence is missing its call identity.");
-            var target = entry.Kind == MessageKind.ToolStart ? starts : results;
-            if (!target.TryAdd(entry.ToolCallId, entry))
-                throw new InvalidOperationException($"Retained tool evidence has duplicate rows for '{entry.ToolCallId}'.");
         }
-        if (results.Keys.Any(id => !starts.ContainsKey(id)) ||
-            (!recoverInterruptedTools && starts.Keys.Any(id => !results.ContainsKey(id))))
+        var spans = SessionContextProjector.GetToolCallSpans(visible);
+        if (spans.Any(span => span.Ambiguous || span.StartIndex is null
+            || (!recoverInterruptedTools && span.ResultIndex is null)))
             throw new InvalidOperationException("Retained tool evidence contains an unfinished or orphaned call.");
+        var results = new Dictionary<SessionEntry, SessionEntry>(ReferenceEqualityComparer.Instance);
+        foreach (var span in spans)
+            if (span.StartIndex is { } start && span.ResultIndex is { } end)
+                results.Add(visible[start], visible[end]);
 
         var messages = new List<AgentMessage>();
         foreach (var entry in visible)
@@ -1251,7 +1252,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     throw new InvalidOperationException("Retained tool evidence is missing its name or arguments.");
                 var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(entry.ToolArgs)
                     ?? throw new InvalidOperationException($"Retained tool arguments are null for '{id}'.");
-                if (!results.TryGetValue(id, out var result))
+                if (!results.TryGetValue(entry, out var result))
                 {
                     // A cold handle cannot finish the old process's call. Keep its actual
                     // arguments and unknown outcome without fabricating a provider tool result.

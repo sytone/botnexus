@@ -26,11 +26,13 @@ public sealed class PlatformConfigurationTests
     [InlineData("24000", 24000)]
     public void AddBotNexusGateway_PreservedTailTokens_BindsConfiguredValueOrDefault(string? configured, int expected)
     {
-        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        var values = new Dictionary<string, string?>
         {
-            ["gateway:compaction:preservedTurns"] = "3",
-            ["gateway:compaction:preservedTailTokens"] = configured
-        }).Build();
+            ["gateway:compaction:preservedTurns"] = "3"
+        };
+        if (configured is not null)
+            values["gateway:compaction:preservedTailTokens"] = configured;
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(values).Build();
         var services = new ServiceCollection();
         services.AddLogging();
         services.AddBotNexusGateway(configuration);
@@ -120,12 +122,13 @@ public sealed class PlatformConfigurationTests
     [Theory]
     [InlineData("preservedTailTokens", "0")]
     [InlineData("preservedTailTokens", "-1")]
+    [InlineData("preservedTailTokens", null)]
     [InlineData("policySource", "99")]
     [InlineData("tokenThresholdRatio", "1.5")]
     [InlineData("tokenThresholdRatio", "NaN")]
     [InlineData("contextWindowTokens", "0")]
     [InlineData("maxSummaryChars", "0")]
-    public void AddBotNexusGateway_InvalidCompactionPolicy_IsNotSilentlyDefaulted(string key, string value)
+    public void AddBotNexusGateway_InvalidCompactionPolicy_IsNotSilentlyDefaulted(string key, string? value)
     {
         var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
         {

@@ -16,7 +16,7 @@ Each HTTP read resolves policy afresh through `ISessionCompactionDiagnostics`. T
 | `configuredContextWindowTokens` | Operator window before resolving the model's real capacity; not a new capacity declaration. |
 | `preservedTailTokens` | Configured maximum retained verbatim estimate; adaptive cuts can retain less. |
 | `postCompactionTargetTokens` | Desired local history estimate: half the trigger, reduced by bounded provider/estimate calibration when available. Mandatory context may make it irreducible. |
-| `scopedContextWindowTokens` | Current working window returned by the context-window resolver. Null when scope cannot establish one. |
+| `scopedContextWindowTokens` | Policy-resolved model capacity, or inherited working window in `Conversation` mode. Null when scope cannot establish one. |
 | `contextWindowTokens` | Window used by runtime compaction policy. When scope is unknown, this is the configured compaction fallback, not a newly invented capacity. |
 | `tokenThresholdRatio` | Current configured fraction for the ratio safety threshold. |
 | `ratioSafetyThresholdTokens` | Model/resolved-window ratio threshold without a configured policy-window or ceiling cap. |
@@ -39,6 +39,8 @@ A configured fallback policy window is distinct from known model capacity. Clien
 - The new object contains scalar policy/count fields only: no prompt text, configuration object, metadata bag or credentials.
 - Token diagnostics do not claim to report the separate oversized-entry byte trigger, compaction circuit-breaker state or whether compaction will succeed.
 - The provider measurement is cleared by existing successful-compaction behavior; unknown measurements remain null, never zero placeholders.
+- `NoContextReduction` preserves history and provider measurement when an automatic token-pressure cut would not lower the local estimate.
+- Exhaustion notices resolve the execution working window separately; changing compaction policy cannot hide a smaller conversation window.
 
 ## `/context` command
 

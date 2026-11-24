@@ -311,7 +311,13 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
             return "Compaction skipped: no summarizable turns were found. Session history was not modified.";
 
         if (reason == CompactionSkipReason.MandatoryContextExceedsBudget)
-            return "Compaction aborted: the active request or unfinished tool groups exceed the preserved-context token budget. Session history was not modified.";
+            return "Compaction aborted: the active request or unfinished tool groups exceed gateway.compaction.preservedTailTokens. " +
+                "Increase that budget, shorten the request, or complete the pending tools. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.NoContextReduction)
+            return "Compaction aborted: the summary would not reduce estimated context tokens. " +
+                "Shorten the active request, finish pending tools, or increase the effective compaction trigger. " +
+                "Inspect /context for the active policy and limits. Session history was not modified.";
 
         if (reason == CompactionSkipReason.SummarizationTimeout)
             return "Compaction aborted: the summarization call timed out. Session history was not modified.";

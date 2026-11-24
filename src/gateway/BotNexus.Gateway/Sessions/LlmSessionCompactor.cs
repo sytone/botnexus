@@ -508,8 +508,19 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             Math.Max(mandatoryTokens, Math.Max(1, (targetTokens - prefixTokens) * 2 / 3)));
         (toSummarize, toPreserve, _, _) = BoundPreservedTail(
             visible, turnSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
-        if (toSummarize.Count == 0 ||
-            (options.PreserveLatestRequest && toSummarize.All(entry => entry.IsCompactionSummary)))
+
+        int SummaryCharBudget(IReadOnlyList<SessionEntry> preserved)
+        {
+            var remaining = targetTokens - prefixTokens - EstimateVisibleTokenCountFromEntries(preserved);
+            return remaining > 0 ? Math.Min(options.MaxSummaryChars, remaining) : options.MaxSummaryChars;
+        }
+
+        bool CanSummarize(IReadOnlyList<SessionEntry> entries, IReadOnlyList<SessionEntry> preserved)
+            => entries.Count > 0 && (!options.PreserveLatestRequest
+                || entries.Any(entry => !entry.IsCompactionSummary)
+                || (ExtractPriorSummary(entries)?.Length ?? 0) > SummaryCharBudget(preserved));
+
+        if (!CanSummarize(toSummarize, toPreserve))
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
 
@@ -539,8 +550,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                     var fallbackSplit = SplitHistory(visible, fallbackTurns);
                     var (fallbackSummarize, fallbackPreserve, _, _) = BoundPreservedTail(
                         visible, fallbackSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
-                    if (fallbackSummarize.Count > 0 &&
-                        (!options.PreserveLatestRequest || fallbackSummarize.Any(entry => !entry.IsCompactionSummary)))
+                    if (CanSummarize(fallbackSummarize, fallbackPreserve))
                     {
                         _logger.LogInformation(
                             "Compaction split found no summarizable turns at PreservedTurns={Requested} for session " +
@@ -554,9 +564,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 }
             }
 
-            // Rewriting the prior summary alone cannot shed an unchanged mandatory tail.
-            if (toSummarize.Count == 0 ||
-                (options.PreserveLatestRequest && toSummarize.All(entry => entry.IsCompactionSummary)))
+            // A tighter live policy may shrink an oversized old summary once. An already-bounded
+            // summary cannot shed an unchanged mandatory tail and must not be rewritten repeatedly.
+            if (!CanSummarize(toSummarize, toPreserve))
             {
                 // #2460 loop guard: this branch previously returned silently, so the coordinator
                 // logged outcome=Aborted with no reason while the transcript kept growing and
@@ -608,9 +618,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // A character is at most one unit of the script-aware token estimate. When mandatory
         // context makes the target irreducible, preserve the normal handoff instead of silently
         // reducing it to a meaningless fragment; the no-rewrite guard bounds repeat attempts.
-        var maxSummaryChars = remainingSummaryTokens > 0
-            ? Math.Min(options.MaxSummaryChars, remainingSummaryTokens)
-            : options.MaxSummaryChars;
+        var maxSummaryChars = SummaryCharBudget(toPreserve);
         if (remainingSummaryTokens <= 0)
             _logger.LogWarning(
                 "Compaction target {TargetTokens} for session {SessionId} cannot fit mandatory context and the summary prefix; " +
@@ -710,6 +718,21 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // insert-at-index walk (the #532 drop-entries bug class) is independently testable.
         var newHistory = BuildCompactedHistory(history, toSummarize, summary);
         var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
+        var (estimatePressure, providerPressure, _) = EvaluateTokenTriggers(planMeasurement, options);
+        if (options.PreserveLatestRequest && (estimatePressure || providerPressure) && tokensAfter >= tokensBefore)
+        {
+            var failures = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                "Compaction aborted for session {SessionId}: {Reason}. Estimated context would grow from {Before} " +
+                "to {After} tokens. History and provider usage are unchanged. Increase the trigger or reduce mandatory " +
+                "context; consecutive failures: {Failures}/{Max}.",
+                session.SessionId, CompactionSkipReason.NoContextReduction, tokensBefore, tokensAfter,
+                failures, MaxConsecutiveFailures);
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion, snap.Count, entriesPreserved: visible.Count,
+                tokensBefore: tokensBefore, tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.NoContextReduction);
+        }
 
         _logger.LogInformation(
             "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
@@ -858,32 +881,26 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         BoundPreservedTail(IReadOnlyList<SessionEntry> history, int preferredCut, int budgetTokens, bool preserveLatestRequest)
     {
         var latestUser = -1;
-        var groups = new Dictionary<string, (int First, int Last, bool HasStart, bool HasResult)>(StringComparer.Ordinal);
         for (var i = 0; i < history.Count; i++)
         {
             var entry = history[i];
             if (preserveLatestRequest && entry.Role.Equals(MessageRole.User))
                 latestUser = i;
-            if (!entry.Role.Equals(MessageRole.Tool) || string.IsNullOrEmpty(entry.ToolCallId))
-                continue;
-            var id = entry.ToolCallId;
-            if (!groups.TryGetValue(id, out var group))
-                group = (i, i, false, false);
-            groups[id] = (group.First, i, group.HasStart || entry.IsToolStartRow(), group.HasResult || entry.IsToolResultRow());
         }
 
         // A cut inside an overlapping/parallel call interval would orphan a result. An
         // unfinished call also pins everything after its start, including approval boundaries.
         var boundaryDeltas = new int[history.Count + 1];
         var mandatoryStart = history.Count;
-        foreach (var group in groups.Values)
+        foreach (var group in SessionContextProjector.GetToolCallSpans(history))
         {
-            var pending = group.HasStart && !group.HasResult;
-            var end = pending ? history.Count - 1 : group.Last;
-            boundaryDeltas[group.First + 1]++;
+            var first = group.StartIndex ?? group.ResultIndex.GetValueOrDefault();
+            var pending = group.ResultIndex is null;
+            var end = group.ResultIndex ?? history.Count - 1;
+            boundaryDeltas[first + 1]++;
             boundaryDeltas[end + 1]--;
             if (pending)
-                mandatoryStart = Math.Min(mandatoryStart, group.First);
+                mandatoryStart = Math.Min(mandatoryStart, first);
         }
         var blockedBoundaries = new bool[history.Count + 1];
         var openGroups = 0;

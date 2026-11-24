@@ -232,6 +232,41 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task CompactAsync_DefaultPolicy_ReducesAnOtherwiseOversizedSingleTurnTail()
+    {
+        const string summary = "Build evidence remains at artifact://build/42.";
+        var session = CreateSession(("user", "Earlier task."), ("assistant", new string('a', 2000)));
+        var request = new SessionEntry { Role = MessageRole.User, Content = "Investigate the long-running build." };
+        session.AddEntry(request);
+        AddToolPairs(session, 180);
+        var options = new CompactionOptions { SummarizationModel = TestModel.Id };
+        var compactor = CreateCompactor(summary);
+        var visible = session.GetHistorySnapshot().ToArray();
+        var legacyTail = new[]
+        {
+            new SessionEntry
+            {
+                Role = MessageRole.System, IsCompactionSummary = true,
+                Content = LlmSessionCompactor.SummaryPrefix + "\n" + summary
+            }
+        }.Concat(visible.Skip(2)).ToArray();
+        var legacy = CreateSession();
+        legacy.AddEntries(legacyTail);
+        var legacyAfter = LlmSessionCompactor.EstimateVisibleTokenCount(legacy.Session);
+        legacyAfter.ShouldBeGreaterThan(CompactionThreshold.Resolve(options));
+        compactor.ShouldCompact(session.Session, options).ShouldBeTrue();
+
+        var result = await compactor.CompactAsync(session, options);
+
+        result.Succeeded.ShouldBeTrue();
+        result.TokensAfter.ShouldBeLessThan(CompactionThreshold.Resolve(options));
+        result.TokensAfter.ShouldBeLessThan(legacyAfter / 4);
+        result.CompactedHistory.ShouldNotBeNull().ShouldContain(entry => ReferenceEquals(entry, request));
+        output.WriteLine("default burst: turn-only tail={0}; bounded tail plus summary={1}; post-cut reduction={2:F1}%",
+            legacyAfter, result.TokensAfter, 100.0 * (legacyAfter - result.TokensAfter) / legacyAfter);
+    }
+
+    [Fact]
     public async Task CompactAsync_MatchedTurnOnlyBaseline_ReducesTotalEstimatedInputIncludingSummarization()
     {
         const string summary = "Evidence and completed work remain at artifact://build/42.";
@@ -600,7 +635,11 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         registry.Setup(value => value.Get(agentId)).Returns(new AgentDescriptor { AgentId = agentId, DisplayName = "A", ModelId = "m", ApiProvider = "p", CompactionTokenCeiling = 100 });
         var config = new BotNexus.Gateway.Configuration.PlatformConfig
         {
-            Gateway = new BotNexus.Gateway.Configuration.GatewaySettingsConfig { World = new BotNexus.Domain.WorldIdentity { Id = "ceiling-world", Name = "World" } },
+            Gateway = new BotNexus.Gateway.Configuration.GatewaySettingsConfig
+            {
+                World = new BotNexus.Domain.WorldIdentity { Id = "ceiling-world", Name = "World" },
+                Compaction = new CompactionOptions { PolicySource = CompactionPolicySource.Conversation }
+            },
             World = new BotNexus.Gateway.Configuration.WorldSettingsConfig { CompactionTokenCeiling = 50 }
         };
         var resolver = new SessionCompactionCeilingResolver(NullLogger<SessionCompactionCeilingResolver>.Instance, registry.Object, store, new TestOptionsMonitor<BotNexus.Gateway.Configuration.PlatformConfig>(config));
@@ -618,21 +657,23 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     [Fact]
     public async Task Ceiling_LowTurnHighVolumeCutPlanMatchesEquivalentWindow()
     {
-        foreach (var providerCount in new int?[] { null, 500 })
+        foreach (var providerCount in new int?[] { null, 5000 })
         {
-            var bounded = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 40)));
-            var equivalent = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 40)));
+            var bounded = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 1600)));
+            var equivalent = CreateSession(("user", "u1"), ("tool", new string('a', providerCount is null ? 4000 : 1600)));
             if (providerCount is int count)
             {
                 bounded.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = count;
                 equivalent.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = count;
+                LlmSessionCompactor.EstimateVisibleTokenCount(bounded.Session).ShouldBeLessThan(500);
             }
-            var options = new CompactionOptions { ContextWindowTokens = 1_000_000, CompactionTokenCeiling = 50, TokenThresholdRatio = 0.5, PreservedTurns = 3, LargestEntryBytesThreshold = 0, SummarizationModel = TestModel.Id };
+            var options = new CompactionOptions { ContextWindowTokens = 1_000_000, CompactionTokenCeiling = 500, TokenThresholdRatio = 0.5, PreservedTurns = 3, LargestEntryBytesThreshold = 0, SummarizationModel = TestModel.Id };
             var compactor = CreateCompactor("short summary");
             compactor.ShouldCompact(bounded.Session, options).ShouldBeTrue();
             var result = await compactor.CompactAsync(bounded, options);
-            var expected = await CreateCompactor("short summary").CompactAsync(equivalent, options with { ContextWindowTokens = 100, CompactionTokenCeiling = null });
+            var expected = await CreateCompactor("short summary").CompactAsync(equivalent, options with { ContextWindowTokens = 1000, CompactionTokenCeiling = null });
             result.Succeeded.ShouldBeTrue();
+            result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
             result.EntriesSummarized.ShouldBeGreaterThan(0);
             result.EntriesSummarized.ShouldBe(expected.EntriesSummarized);
             result.EntriesPreserved.ShouldBe(expected.EntriesPreserved);

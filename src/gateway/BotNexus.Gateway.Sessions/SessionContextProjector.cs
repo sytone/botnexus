@@ -168,9 +168,10 @@ public static class SessionContextProjector
     /// <c>MessageKind.ToolStart</c> stamp added in #2906, falling back for legacy rows to the old
     /// heuristic of having <see cref="SessionEntry.ToolArgs"/> set
     /// (populated from the <c>AgentStreamEventType.ToolStart</c> event). A matching ToolEnd
-    /// shares the same <see cref="SessionEntry.ToolCallId"/>.
-    /// The detection scans backward from the most recent user message and checks all tool
-    /// entries in the preceding turn for unmatched starts.
+    /// shares the same <see cref="SessionEntry.ToolCallId"/> and execution identity.
+    /// All earlier live turns are checked, including interruptions that predate multiple resumes.
+    /// Calls in the latest turn are not declared abandoned, and completions flushed after its user
+    /// message still resolve their original start.
     /// </remarks>
     public static AbandonedTurnResult DetectAbandonedTurn(IReadOnlyList<SessionEntry> history)
     {
@@ -193,65 +194,55 @@ public static class SessionContextProjector
         if (lastUserIndex <= 0)
             return AbandonedTurnResult.None;
 
-        // Find the second-to-last user message (start of the previous turn).
-        int prevUserIndex = -1;
-        for (int i = lastUserIndex - 1; i >= 0; i--)
-        {
-            if (history[i].Role.Equals(MessageRole.User) && !history[i].IsHistory)
-            {
-                prevUserIndex = i;
-                break;
-            }
-        }
-
-        if (prevUserIndex < 0)
+        var abandoned = GetToolCallSpans(history)
+            .Where(span => span.StartIndex is { } start && start < lastUserIndex && span.ResultIndex is null)
+            .Select(span => history[span.StartIndex.GetValueOrDefault()])
+            .ToArray();
+        if (abandoned.Length == 0)
             return AbandonedTurnResult.None;
 
-        // Scan the entries between prevUserIndex and lastUserIndex for dangling tool starts.
-        // A ToolStart has ToolArgs set; a ToolEnd for the same call has the same ToolCallId
-        // but no ToolArgs.
-        // #2906: BOTH rows now carry ToolArgs, so the discriminator is the typed row kind
-        // (SessionEntry.IsToolStartRow), which falls back to the old ToolArgs heuristic for rows
-        // persisted before #2906.
-        var toolStarts = new HashSet<string>(StringComparer.Ordinal);
-        var toolEnds = new HashSet<string>(StringComparer.Ordinal);
-        int abandonedCount = 0;
+        return new AbandonedTurnResult(HasAbandonedTurn: true, AbandonedEntryCount: abandoned.Length)
+        {
+            AbandonedToolStarts = abandoned
+        };
+    }
 
-        for (int i = prevUserIndex + 1; i < lastUserIndex; i++)
+    /// <summary>
+    /// Pairs live tool rows chronologically within an execution. A reused identity after a completed
+    /// exchange starts a new span, never supplies a result for a later pending call. Orphaned results
+    /// and overlapping duplicate starts remain explicit so replay can reject ambiguous evidence.
+    /// </summary>
+    public static IReadOnlyList<(int? StartIndex, int? ResultIndex, bool Ambiguous)> GetToolCallSpans(
+        IReadOnlyList<SessionEntry> history)
+    {
+        ArgumentNullException.ThrowIfNull(history);
+        var spans = new List<(int? StartIndex, int? ResultIndex, bool Ambiguous)>();
+        var pending = new Dictionary<(AgentRunId? Run, string Id), int>();
+        for (var i = 0; i < history.Count; i++)
         {
             var entry = history[i];
-            if (entry.IsCrashSentinel || entry.IsHistory)
+            if (entry.IsHistory || entry.IsCrashSentinel || entry.Role != MessageRole.Tool
+                || string.IsNullOrEmpty(entry.ToolCallId))
                 continue;
-
-            if (!entry.Role.Equals(MessageRole.Tool))
-                continue;
-
-            if (entry.ToolCallId is null)
-                continue;
-
+            var key = (entry.AgentRunId, entry.ToolCallId);
             if (entry.IsToolStartRow())
             {
-                // This is a ToolStart entry
-                toolStarts.Add(entry.ToolCallId);
+                var ambiguous = pending.TryGetValue(key, out var previous);
+                if (ambiguous)
+                    spans[previous] = (spans[previous].StartIndex, spans[previous].ResultIndex, true);
+                pending[key] = spans.Count;
+                spans.Add((i, null, ambiguous));
+            }
+            else if (pending.Remove(key, out var start))
+            {
+                spans[start] = (spans[start].StartIndex, i, spans[start].Ambiguous);
             }
             else
             {
-                // This is a ToolEnd entry
-                toolEnds.Add(entry.ToolCallId);
+                spans.Add((null, i, false));
             }
         }
-
-        // Dangling starts = ToolStarts that have no matching ToolEnd
-        foreach (var startId in toolStarts)
-        {
-            if (!toolEnds.Contains(startId))
-                abandonedCount++;
-        }
-
-        if (abandonedCount == 0)
-            return AbandonedTurnResult.None;
-
-        return new AbandonedTurnResult(HasAbandonedTurn: true, AbandonedEntryCount: abandonedCount);
+        return spans;
     }
 }
 
@@ -262,6 +253,9 @@ public static class SessionContextProjector
 /// <param name="AbandonedEntryCount">Number of tool-start entries without matching completions.</param>
 public sealed record AbandonedTurnResult(bool HasAbandonedTurn, int AbandonedEntryCount)
 {
+    /// <summary>The original unfinished rows; recovery preserves their payloads in historical audit.</summary>
+    public IReadOnlyList<SessionEntry> AbandonedToolStarts { get; init; } = [];
+
     /// <summary>Singleton for the no-abandoned-turn case.</summary>
     public static readonly AbandonedTurnResult None = new(HasAbandonedTurn: false, AbandonedEntryCount: 0);
 }

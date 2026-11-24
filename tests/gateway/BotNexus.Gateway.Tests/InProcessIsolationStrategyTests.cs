@@ -490,7 +490,7 @@ public sealed class InProcessIsolationStrategyTests
 
         replacement.ShouldNotBeNull();
         decisionOptions.ShouldNotBeNull();
-        decisionOptions.ContextWindowTokens.ShouldBe(128_000);
+        decisionOptions.ContextWindowTokens.ShouldBe(8_192, "known model capacity must bound an oversized descriptor window");
         decisionOptions.TokenThresholdRatio.ShouldBe(0.6);
         decisionOptions.CompactionTokenCeiling.ShouldBe(50_000);
         executionOptions.ShouldBeSameAs(decisionOptions);

@@ -141,7 +141,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
         // provider context is far larger than the estimate. With the budget normalised to provider
         // units the split becomes viable and the session actually sheds context.
         var session = CreateFourTurnSession();
-        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 800;
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 8000;
 
         var logger = new ListLogger<LlmSessionCompactor>();
         var compactor = CreateCompactor(logger);
@@ -149,6 +149,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
         var result = await compactor.CompactAsync(session, FourTurnOptions());
 
         result.Succeeded.ShouldBeTrue();
+        result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
         result.SkipReason.ShouldBeNull();
         result.EntriesPreserved.ShouldBeGreaterThan(1);
     }
@@ -191,7 +192,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
     private static CompactionOptions FourTurnOptions() => new()
     {
         PreservedTurns = 4,
-        ContextWindowTokens = 1_000,
+        ContextWindowTokens = 10_000,
         TokenThresholdRatio = 0.5,
         SummarizationModel = TestModel.Id
     };
@@ -210,7 +211,7 @@ public sealed class LlmSessionCompactorPreservedTurnScalingTests
         session.AddEntries(new[]
         {
             new SessionEntry { Role = MessageRole.User, Content = "u1" },
-            new SessionEntry { Role = MessageRole.Assistant, Content = "a1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = new string('a', 1600) },
             new SessionEntry { Role = MessageRole.User, Content = "u2" },
             new SessionEntry { Role = MessageRole.Assistant, Content = "a2" },
             new SessionEntry { Role = MessageRole.User, Content = "u3" },
