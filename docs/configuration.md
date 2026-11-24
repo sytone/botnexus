@@ -1444,6 +1444,8 @@ The `compaction` section tunes when and how a session's history is summarised to
 ```bash
 botnexus config set gateway.compaction.preservedTurns 3
 botnexus config set gateway.compaction.preservedTailTokens 12000
+botnexus config set gateway.compaction.policySource Configured
+botnexus config set gateway.compaction.compactionTokenCeiling 50000
 botnexus config set gateway.compaction.tokenThresholdRatio 0.6
 botnexus config set gateway.compaction.contextWindowTokens 128000
 botnexus config set gateway.compaction.largestEntryBytesThreshold 65536
@@ -1451,11 +1453,13 @@ botnexus config set gateway.compaction.largestEntryBytesThreshold 65536
 
 | Property | Type | Default | Description |
 |----------|------|---------|-------------|
-| `preservedTurns` | int | 3 | Preferred recent user turns to retain verbatim within `preservedTailTokens`. Zero explicitly summarises all completed work, including the latest request. |
+| `policySource` | enum | `Configured` | Your configured policy wins by default. Choose `Conversation` to inherit scoped settings, or `Model` to use model capacity and the ratio. |
+| `compactionTokenCeiling` | int? | null | Explicit trigger in tokens. In `Configured` mode this takes precedence over scoped ceilings; actual model safety still applies. |
+| `preservedTurns` | int | 3 | Preferred recent user turns within the retained-token budget. Zero folds completed work but still protects the active request; it does not select a manual operation. |
 | `preservedTailTokens` | int | 12000 | Positive estimated token budget for retained verbatim entries. Includes content, tool arguments and reasoning; excludes the new summary, system prompt and tool schemas. |
 | `maxSummaryChars` | int | 16000 | Maximum characters for the compaction summary. |
 | `tokenThresholdRatio` | double | 0.6 | Fraction of the context window (0.0–1.0) at which the token-count trigger fires. |
-| `contextWindowTokens` | int | 128000 | **Fallback** context window size (tokens) for the token-count trigger, used only when no scoped window is resolved. See [Scoped context windows](#scoped-context-windows) below. |
+| `contextWindowTokens` | int | 128000 | Configured policy window. With `Configured` and no selected ceiling, the ratio applies to this window even for a larger model. Also the fallback when model capacity is unknown. |
 | `largestEntryBytesThreshold` | int | 65536 (64 KiB) | A single visible entry at or above this UTF-8 byte size triggers compaction on its own, independently of the token-count threshold. Measured in bytes (not characters) so multibyte payloads are accounted for accurately. A value of 0 or less disables the bloat-aware trigger, leaving only the token-count threshold. |
 | `circuitBreakerCooldownSeconds` | int | 600 | How long the per-session compaction circuit breaker stays open after repeated failures before retrying. |
 | `cronLlmIdleTimeoutMs` | int | 60000 (60s) | Stream-setup idle cap (milliseconds) applied to the compaction summarization model call when the resolved candidate is a **cloud** provider. Wires the first-token watchdog so a cloud model that stalls mid-stream (or never emits a first token) is aborted early, well inside the per-attempt `timeoutSeconds` window, so the model fallback chain can still try the next candidate. Intentionally **not** applied to local/self-hosted providers (localhost / 127.0.0.1 - e.g. ollama, vllm, lmstudio, sglang), which are legitimately slow to warm up. A value of 0 or less disables the cap entirely. |
@@ -1471,10 +1475,23 @@ circuit breaker. Reduce the active input or deliberately raise the budget throug
 raising it leaves less space for new work. This is a working-tail estimate, not a hard cap on
 the entire provider request: the summary and system/tool overhead consume additional tokens.
 
+The cut targets approximately half the effective trigger, rather than always retaining the
+full 12000-token allowance. It reserves space for the summary prefix and handoff, trims optional
+tail entries first, and reduces the summary character allowance to fit the remaining estimate.
+The summarization request also has an output-token limit bounded by that allowance and the
+summary model's output limit. Mandatory context is never dropped to meet this adaptive target.
+If mandatory context and the prefix already consume the target, a warning explains that the
+target is irreducible; the normal handoff allowance remains, and the no-rewrite guard prevents
+repeatedly paying to rewrite only an unchanged summary. Raise the trigger or reduce active input.
+These are estimated history savings, not a measured reduction in provider billing.
+
 Compaction keeps original transcript entries in storage and marks folded entries as historical.
 Retained typed tool-start/result pairs are restored as complete exchanges after compaction,
-both within a running handle and when it is recreated. Unfinished, duplicate or malformed typed
-tool evidence blocks a provider refresh rather than fabricating a result. Legacy tool rows
+both within a running handle and when it is recreated. Duplicate, orphaned or malformed typed
+tool evidence blocks a provider refresh rather than fabricating a result. On cold recovery,
+an interrupted tool call becomes an explicit unknown-outcome notice with its real arguments:
+there is no fabricated tool result and side effects must be checked before retrying.
+Unfinished evidence still blocks an in-flight provider refresh. Legacy tool rows
 without typed pairing metadata retain the existing cold-resume filtering behavior.
 After successful live-context replacement, an unchanged file read returns its content again;
 repeat reads within unchanged context still use compact notices after checking the on-disk token.
@@ -1483,18 +1500,40 @@ The section is optional - when absent, the defaults above apply. The bloat-aware
 
 ##### Scoped context windows
 
-`contextWindowTokens` is a process-global fallback, not the value every agent is measured against. The
-token-count trigger budgets against the **most specific context window that applies to the session**,
-using the same precedence chain the dispatch path already uses:
+`gateway.compaction.policySource` makes inheritance intentional:
+
+- **`Configured` (default):** an explicit gateway ceiling wins. Otherwise an agent ceiling,
+  then a local-world ceiling supplies the configured trigger. With no selected ceiling, use
+  `floor(gateway.compaction.contextWindowTokens × tokenThresholdRatio)`.
+  Conversation ceilings and working-window overrides cannot replace this policy.
+- **`Conversation`:** opt into conversation > agent > model working-window inheritance below,
+  and conversation > agent > world > gateway ceiling inheritance.
+- **`Model`:** ignore configured and scoped ceilings and working windows; use the active model's
+  capacity multiplied by `tokenThresholdRatio`. The configured window remains the fallback if
+  capacity is unknown.
+
+The actual registered model's capacity multiplied by the ratio is always an independent safety
+limit when known. A configured ceiling cannot enlarge that capacity. For example, with ratio
+0.6, a 50000-token configured trigger stays at 50000 on a 1M-token model, but is limited to
+19200 on a 32k-token model. Model selection itself is unchanged.
+
+To deliberately opt into inheritance or return to the default:
+
+```bash
+botnexus config set gateway.compaction.policySource Conversation
+botnexus config set gateway.compaction.policySource Model
+botnexus config set gateway.compaction.policySource Configured
+```
+
+In `Conversation` mode, the working-window chain is:
 
 1. The conversation's `contextWindowOverride`, when one is set.
 2. Otherwise the agent's own `contextWindow` (`agents.<id>.contextWindow`).
 3. Otherwise the registered model's own context window.
 4. Otherwise `gateway.compaction.contextWindowTokens`.
 
-`tokenThresholdRatio` is applied to whichever window was resolved. A scoped token ceiling can
-lower that threshold (see below); `largestEntryBytesThreshold` is byte-based and unaffected. An agent with no scoped
-window at any layer behaves exactly as it did before this precedence existed.
+The ratio applies to the resolved window, bounded by known model capacity. A selected ceiling
+can lower that threshold; `largestEntryBytesThreshold` is byte-based and unaffected.
 
 Without this, an agent pinned to a 32k model under a 200k global setting would reach provider
 overflow while the compactor still believed compaction was not yet due, forcing the lossy reactive
@@ -1523,21 +1562,30 @@ or fractions. Set a scope's value to `null` to resume inheritance:
 botnexus config set agents.my-agent.compactionTokenCeiling null
 ```
 
-The first configured ceiling wins: **conversation > agent > world**. A larger conversation
+With `policySource=Conversation`, the first configured ceiling wins:
+**conversation > agent > world > gateway**. A larger conversation
 ceiling replaces a smaller inherited ceiling; ceilings are not minimized across scopes. The
 effective token threshold is still `min(floor(resolved context window × tokenThresholdRatio),
-selected ceiling)`. If no scope supplies a ceiling, behavior remains ratio-only. Pressure must
+selected ceiling)`. With the default `Configured` mode, the explicit gateway ceiling wins,
+otherwise agent then world supplies the ceiling; conversation settings are inactive.
+`Model` mode ignores all ceilings. If no selected scope supplies one, behavior remains
+ratio-only according to the selected policy source. Pressure must
 **exceed** the threshold; equality does not trigger compaction. The world default applies only
 to conversations in that gateway's world.
 
-The backend re-reads the policy before pre-turn and mid-loop checks, including conflict retries.
+Compaction options reload through the canonical configuration pipeline without restarting the
+gateway. CLI/API changes apply on the next pre-turn or mid-loop check, not midway through a
+compaction already running. The backend re-reads policy, including conflict retries.
 An unavailable policy/session read blocks the next provider turn rather than silently dropping
 the ceiling. The ceiling is a trigger, not a hard cap on prompt size or a guarantee that
 summarisation succeeds. It does not change generation settings, preserved-turn behavior, the
 byte-size trigger, or the existing compaction circuit breaker.
 
-Conversation ceilings are available through the backend override contract, but there is no
-ceiling-specific CLI command, portal editing control, or effective-policy display in this slice.
+Use `/context` or the authenticated session context API to inspect the selected policy source,
+ceiling and source, model/working-window safety threshold, effective trigger, retained-tail limit
+and estimated post-cut target. The schema-driven gateway settings expose the policy selector
+and numeric controls. Dedicated conversation-ceiling editors are not added by this change.
+Conversation ceilings remain available through the backend override contract.
 Integrators should use the [conversation override reference](api/conversations.md).
 That PUT is not a field-only patch: ceiling callers must also resend existing model, thinking,
 and context-window override values to preserve them. Omitted values clear those three overrides.
@@ -2113,7 +2161,11 @@ An unmodelled key is never silently ignored: the gateway emits exactly one warni
 
 ## Hot Reload
 
-BotNexus monitors `~/.botnexus/config.json` for changes and applies most configuration updates **live** — no Gateway restart required. The `ConfigReloadOrchestrator` (a background service) uses `IOptionsMonitor` to detect changes, debounces rapid edits (500 ms), and applies updates to the appropriate subsystems.
+BotNexus applies most configuration updates **live** through the canonical configuration
+pipeline; use the CLI/API rather than editing a generated JSON projection. The
+`ConfigReloadOrchestrator` uses `IOptionsMonitor`, debounces rapid edits (500 ms), and applies
+updates to the appropriate subsystems. This does not imply that SQLite cutover is complete on
+every installed version; legacy import and compatibility behavior depend on that version.
 
 ### What reloads automatically
 
@@ -2124,6 +2176,7 @@ BotNexus monitors `~/.botnexus/config.json` for changes and applies most configu
 | `providers.*` | Provider filtering and capability resolution read the rebound configuration. |
 | `cron.*` | Seeded job definitions are reloaded. |
 | `gateway.apiKey` / `gateway.apiKeys.*` | Authentication reads the rebound gateway configuration. |
+| `gateway.compaction.*` | Policy source, thresholds, retained-tail and summary allowances apply at the next policy check; an in-progress cut keeps its snapshot. |
 | `agents.<id>.fileAccess` | The agent is re-registered and its path validator is rebuilt from the new allow/deny lists. |
 
 Agent re-registration compares the whole effective descriptor — identity, model, prompts, tools,

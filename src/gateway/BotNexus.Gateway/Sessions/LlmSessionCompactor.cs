@@ -475,7 +475,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         var turnSplit = SplitHistory(visible, effectivePreservedTurns);
         var (toSummarize, toPreserve, mandatoryTokens, exceedsBudget) = BoundPreservedTail(
-            visible, turnSplit.toSummarize.Count, options.PreservedTailTokens, options.PreservedTurns > 0);
+            visible, turnSplit.toSummarize.Count, options.PreservedTailTokens, options.PreserveLatestRequest);
         if (exceedsBudget)
         {
             var failures = RecordFailure(sessionKey);
@@ -489,8 +489,17 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 tokensBefore: planMeasurement.EstimatedTokens, tokensAfter: planMeasurement.EstimatedTokens,
                 skipReason: CompactionSkipReason.MandatoryContextExceedsBudget);
         }
+        // Aim halfway below the trigger, charging the summary prefix and reserving a third
+        // for the handoff. This adaptive optional budget must never displace mandatory context.
+        var targetTokens = Math.Max(1, CompactionThreshold.Resolve(options) / 2);
+        var prefixTokens = EstimateVisibleTokenCountFromEntries(
+            [new SessionEntry { Role = MessageRole.System, Content = SummaryPrefix + "\n" }]);
+        var tailBudget = Math.Min(options.PreservedTailTokens,
+            Math.Max(mandatoryTokens, Math.Max(1, (targetTokens - prefixTokens) * 2 / 3)));
+        (toSummarize, toPreserve, _, _) = BoundPreservedTail(
+            visible, turnSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
         if (toSummarize.Count == 0 ||
-            (options.PreservedTurns > 0 && toSummarize.All(entry => entry.IsCompactionSummary)))
+            (options.PreserveLatestRequest && toSummarize.All(entry => entry.IsCompactionSummary)))
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
 
@@ -519,9 +528,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 {
                     var fallbackSplit = SplitHistory(visible, fallbackTurns);
                     var (fallbackSummarize, fallbackPreserve, _, _) = BoundPreservedTail(
-                        visible, fallbackSplit.toSummarize.Count, options.PreservedTailTokens, options.PreservedTurns > 0);
+                        visible, fallbackSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
                     if (fallbackSummarize.Count > 0 &&
-                        (options.PreservedTurns <= 0 || fallbackSummarize.Any(entry => !entry.IsCompactionSummary)))
+                        (!options.PreserveLatestRequest || fallbackSummarize.Any(entry => !entry.IsCompactionSummary)))
                     {
                         _logger.LogInformation(
                             "Compaction split found no summarizable turns at PreservedTurns={Requested} for session " +
@@ -537,7 +546,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
             // Rewriting the prior summary alone cannot shed an unchanged mandatory tail.
             if (toSummarize.Count == 0 ||
-                (options.PreservedTurns > 0 && toSummarize.All(entry => entry.IsCompactionSummary)))
+                (options.PreserveLatestRequest && toSummarize.All(entry => entry.IsCompactionSummary)))
             {
                 // #2460 loop guard: this branch previously returned silently, so the coordinator
                 // logged outcome=Aborted with no reason while the transcript kept growing and
@@ -585,8 +594,20 @@ public sealed class LlmSessionCompactor : ISessionCompactor
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
         var priorSummary = ExtractPriorSummary(toSummarize);
-        var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars, priorSummary);
-        var effectiveOptions = ResolveEffectiveOptions(options);
+        var remainingSummaryTokens = targetTokens - prefixTokens - EstimateVisibleTokenCountFromEntries(toPreserve);
+        // A character is at most one unit of the script-aware token estimate. When mandatory
+        // context makes the target irreducible, preserve the normal handoff instead of silently
+        // reducing it to a meaningless fragment; the no-rewrite guard bounds repeat attempts.
+        var maxSummaryChars = remainingSummaryTokens > 0
+            ? Math.Min(options.MaxSummaryChars, remainingSummaryTokens)
+            : options.MaxSummaryChars;
+        if (remainingSummaryTokens <= 0)
+            _logger.LogWarning(
+                "Compaction target {TargetTokens} for session {SessionId} cannot fit mandatory context and the summary prefix; " +
+                "preserving the handoff. Increase the trigger or reduce mandatory context.",
+                targetTokens, session.SessionId);
+        var summaryPrompt = BuildSummarizationPrompt(toSummarize, maxSummaryChars, priorSummary);
+        var effectiveOptions = ResolveEffectiveOptions(options with { MaxSummaryChars = maxSummaryChars });
 
         string summary;
         try
@@ -668,7 +689,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // summary is entirely ordinary), and this value is PERSISTED into session history - a lone
         // surrogate that reaches storage is unrepairable because its partner is discarded here.
         // SafeTruncate returns the original reference untouched when no truncation is needed.
-        summary = TextTruncation.SafeTruncate(summary, options.MaxSummaryChars)!;
+        summary = TextTruncation.SafeTruncate(summary, maxSummaryChars)!;
 
         // Redact any secrets that leaked into the LLM summary before persisting.
         if (_redactor is not null)
@@ -874,7 +895,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var mandatoryUnits = requestUnits + suffixUnits[mandatoryStart];
         var budgetUnits = (long)budgetTokens * TokenEstimator.CharsPerToken;
         if (mandatoryUnits > budgetUnits)
-            return ([], history.ToList(), TokenEstimator.TokensFromUnits(mandatoryUnits), true);
+            return ([], history.ToList(), TokenEstimator.TokensFromUnits(mandatoryUnits + TokenEstimator.CharsPerToken - 1), true);
 
         var cut = Math.Min(preferredCut, mandatoryStart);
         while (cut < mandatoryStart && (blockedBoundaries[cut] || requestUnits + suffixUnits[cut] > budgetUnits))
@@ -889,7 +910,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             else
                 toSummarize.Add(history[i]);
         }
-        return (toSummarize, toPreserve, TokenEstimator.TokensFromUnits(mandatoryUnits), false);
+        return (toSummarize, toPreserve, TokenEstimator.TokensFromUnits(mandatoryUnits + TokenEstimator.CharsPerToken - 1), false);
     }
 
     private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve) SplitHistory(
@@ -1211,7 +1232,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             var generationOptions = new GenerationOptions
             {
                 CancellationToken = attemptToken,
-                SessionId = sessionId?.Value
+                SessionId = sessionId?.Value,
+                MaxTokens = Math.Max(1, Math.Min(options.MaxSummaryChars,
+                    model.MaxTokens > 0 ? model.MaxTokens : options.MaxSummaryChars))
             };
             var baseExecutionOptions = new ProviderExecutionOptions
             {

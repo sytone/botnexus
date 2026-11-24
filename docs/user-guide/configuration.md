@@ -786,10 +786,12 @@ The gateway warns after prolonged inactivity and verifies the runtime scheduler 
    ```
 
 **Compaction Settings:**
+- `policySource`: `Configured` by default; explicitly choose `Conversation` for scoped inheritance or `Model` for model-based policy
+- `compactionTokenCeiling`: Explicit configured trigger in tokens; the actual model's safety limit still applies
 - `preservedTurns`: Preferred recent user turns to keep verbatim within the token budget
 - `preservedTailTokens`: Positive estimated token budget for retained verbatim context (default: 12000)
 - `tokenThresholdRatio`: Fraction of the context window at which compaction triggers
-- `contextWindowTokens`: Fallback context window size in tokens
+- `contextWindowTokens`: Configured working-context policy window; also the fallback when model capacity is unknown
 
 See [Configuration reference](../configuration.md#session-compaction) for the full set, including the
 additive per-entry byte trigger `largestEntryBytesThreshold`.
@@ -798,6 +800,10 @@ The latest user request and unfinished tool groups are retained during automatic
 If these alone exceed the budget, compaction reports `MandatoryContextExceedsBudget` without
 changing history. The budget limits retained working context, not stored transcript size or
 the entire next model request.
+The cut targets roughly half the effective trigger, including estimated summary space, rather
+than retaining the entire allowance after every cut. Mandatory context can make that target
+irreducible. Changes apply on the next policy check without restarting. Use `/context` to see
+the selected source, effective trigger, retained-tail limit and target.
 
 ### Session Cleanup
 

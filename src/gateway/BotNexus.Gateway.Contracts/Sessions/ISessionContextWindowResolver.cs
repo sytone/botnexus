@@ -31,9 +31,9 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 public interface ISessionContextWindowResolver
 {
     /// <summary>
-    /// Resolves the scoped context window for the supplied agent and conversation, using the same
-    /// precedence chain the dispatch path uses: conversation override, then the agent descriptor's
-    /// <c>ContextWindow</c>, then the resolved model's own context window.
+    /// Resolves the actual model capacity for Configured/Model policies. Conversation explicitly
+    /// selects conversation-over-agent-over-model working-window inheritance, bounded by known
+    /// model capacity. A conversation's model selection still determines the actual model.
     /// </summary>
     /// <param name="agentId">The agent owning the session.</param>
     /// <param name="conversationId">The conversation the session belongs to.</param>
@@ -67,8 +67,8 @@ public static class ScopedCompactionWindow
 
     /// <summary>
     /// Returns <paramref name="options"/> with <see cref="CompactionOptions.ContextWindowTokens"/>
-    /// narrowed to <paramref name="scopedWindow"/>, or the original instance untouched when no scoped
-    /// window was resolved. Only the base window changes; every other option - notably
+    /// set to <paramref name="scopedWindow"/>, preserving the configured policy window separately,
+    /// or the original instance untouched when no window was resolved. Every other option - notably
     /// <see cref="CompactionOptions.TokenThresholdRatio"/> and
     /// <see cref="CompactionOptions.LargestEntryBytesThreshold"/> - is carried through verbatim.
     /// </summary>
@@ -76,7 +76,7 @@ public static class ScopedCompactionWindow
     {
         ArgumentNullException.ThrowIfNull(options);
         var usable = Usable(scopedWindow);
-        return usable.HasValue ? options with { ContextWindowTokens = usable.Value } : options;
+        return usable.HasValue ? options.WithResolvedWindow(usable.Value) : options;
     }
 
     private static int? Usable(int? value) => value is > 0 ? value : null;

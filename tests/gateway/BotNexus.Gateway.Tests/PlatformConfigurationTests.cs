@@ -61,6 +61,86 @@ public sealed class PlatformConfigurationTests
     }
 
     [Fact]
+    public void CompactionOptions_ManualOperation_CannotBeSelectedThroughConfiguration()
+    {
+        var configured = JsonSerializer.Deserialize<CompactionOptions>(
+            "{\"preservedTurns\":0,\"preserveLatestRequest\":false,\"configuredWindowTokens\":1}",
+            new JsonSerializerOptions(JsonSerializerDefaults.Web)).ShouldNotBeNull();
+        configured.PreserveLatestRequest.ShouldBeTrue();
+        var builder = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["preservedTurns"] = "0", ["preserveLatestRequest"] = "false", ["configuredWindowTokens"] = "1"
+        }).Build();
+        var bound = builder.Get<CompactionOptions>().ShouldNotBeNull();
+        bound.PreserveLatestRequest.ShouldBeTrue();
+        bound.ConfiguredWindowTokens.ShouldBeNull();
+        configured.ConfiguredWindowTokens.ShouldBeNull();
+        var manual = configured.ForManualCompaction();
+        manual.PreserveLatestRequest.ShouldBeFalse();
+        var serialized = JsonSerializer.Serialize(manual, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        serialized.ShouldNotContain("preserveLatestRequest");
+        serialized.ShouldNotContain("configuredWindowTokens");
+        configured.PreserveLatestRequest.ShouldBeTrue();
+    }
+
+    [Fact]
+    public void AddPlatformConfiguration_CompactionReloadAndReset_UseOnlyTheCanonicalProvider()
+    {
+        using var fixture = new PlatformConfigFixture();
+        var stale = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:compaction:preservedTailTokens"] = "9999",
+            ["gateway:compaction:compactionTokenCeiling"] = "8888"
+        }).Build();
+        var canonical = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:compaction:preservedTailTokens"] = "2400",
+            ["gateway:compaction:compactionTokenCeiling"] = "5000",
+            ["gateway:compaction:policySource"] = "Conversation"
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway(stale);
+        services.AddPlatformConfiguration(fixture.ConfigPath, canonical);
+        using var provider = services.BuildServiceProvider();
+        var monitor = provider.GetRequiredService<IOptionsMonitor<CompactionOptions>>();
+        monitor.CurrentValue.PreservedTailTokens.ShouldBe(2400);
+        monitor.CurrentValue.PolicySource.ShouldBe(CompactionPolicySource.Conversation);
+
+        canonical["gateway:compaction:compactionTokenCeiling"] = null;
+        canonical["gateway:compaction:preservedTailTokens"] = "1200";
+        canonical["gateway:compaction:policySource"] = "Configured";
+        canonical.Reload();
+
+        monitor.CurrentValue.CompactionTokenCeiling.ShouldBeNull("a removed ceiling must not reappear from registration-time config");
+        monitor.CurrentValue.PreservedTailTokens.ShouldBe(1200);
+        monitor.CurrentValue.PolicySource.ShouldBe(CompactionPolicySource.Configured);
+    }
+
+    [Theory]
+    [InlineData("preservedTailTokens", "0")]
+    [InlineData("preservedTailTokens", "-1")]
+    [InlineData("policySource", "99")]
+    [InlineData("tokenThresholdRatio", "1.5")]
+    [InlineData("tokenThresholdRatio", "NaN")]
+    [InlineData("contextWindowTokens", "0")]
+    [InlineData("maxSummaryChars", "0")]
+    public void AddBotNexusGateway_InvalidCompactionPolicy_IsNotSilentlyDefaulted(string key, string value)
+    {
+        var configuration = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        {
+            ["gateway:compaction:" + key] = value
+        }).Build();
+        var services = new ServiceCollection();
+        services.AddLogging();
+        services.AddBotNexusGateway(configuration);
+        using var provider = services.BuildServiceProvider();
+
+        Should.Throw<OptionsValidationException>(() =>
+            provider.GetRequiredService<IOptionsMonitor<CompactionOptions>>().CurrentValue);
+    }
+
+    [Fact]
     public async Task PlatformConfigLoader_LoadAsync_WhenFileMissing_ReturnsDefaultConfig()
     {
         var config = await PlatformConfigLoader.LoadAsync(Path.Combine(Guid.NewGuid().ToString("N"), "missing.json"));

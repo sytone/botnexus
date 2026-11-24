@@ -18,6 +18,40 @@ namespace BotNexus.Gateway.Tests.Sessions;
 /// </summary>
 public sealed class ScopedCompactionWindowTests
 {
+    [Theory]
+    [InlineData(CompactionPolicySource.Configured, null, 76_800)]
+    [InlineData(CompactionPolicySource.Configured, 100_000, 100_000)]
+    [InlineData(CompactionPolicySource.Conversation, null, 600_000)]
+    [InlineData(CompactionPolicySource.Model, 100_000, 600_000)]
+    public void Apply_UserPolicyWins_UnlessInheritanceIsExplicit(
+        CompactionPolicySource source, int? ceiling, int expected)
+    {
+        var options = new CompactionOptions { PolicySource = source, CompactionTokenCeiling = ceiling };
+        var applied = ScopedCompactionWindow.Apply(options, 1_000_000);
+
+        CompactionThreshold.Resolve(applied).ShouldBe(expected);
+        CompactionThreshold.Resolve(ScopedCompactionWindow.Apply(options, 32_000)).ShouldBe(19_200,
+            "an explicit user ceiling cannot override the actual model's safety limit");
+    }
+
+    [Theory]
+    [InlineData(CompactionPolicySource.Configured, 128_000)]
+    [InlineData(CompactionPolicySource.Conversation, 16_000)]
+    [InlineData(CompactionPolicySource.Model, 128_000)]
+    public async Task Resolver_PolicySource_ChoosesModelCapacityOrScopedWorkingWindow(
+        CompactionPolicySource source, int expected)
+    {
+        var resolver = CreateResolver(16_000, 32_000, 128_000, source);
+        (await resolver.ResolveAsync(AgentId.From("a"), ConversationId.From("c"))).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task Resolver_ConversationWindowAboveModel_StillRespectsActualCapacity()
+    {
+        var resolver = CreateResolver(256_000, 512_000, 32_000);
+        (await resolver.ResolveAsync(AgentId.From("a"), ConversationId.From("c"))).ShouldBe(32_000);
+    }
+
     // ---------------------------------------------------------------------------------------------
     // AC1-AC3: precedence - conversation override > agent descriptor > model window > global option.
     // ---------------------------------------------------------------------------------------------
@@ -281,7 +315,11 @@ public sealed class ScopedCompactionWindowTests
         var resolver = new SessionContextWindowResolver(
             NullLogger<SessionContextWindowResolver>.Instance,
             registry.Object,
-            conversations.Object);
+            conversations.Object,
+            options: new TestOptionsMonitor<CompactionOptions>(new CompactionOptions
+            {
+                PolicySource = CompactionPolicySource.Conversation
+            }));
 
         (await resolver.ResolveAsync(AgentId.From("a"), ConversationId.From("c"))).ShouldBe(
             32_000,
@@ -290,7 +328,8 @@ public sealed class ScopedCompactionWindowTests
 
     // ---------------------------------------------------------------------------------------------
 
-    private static SessionContextWindowResolver CreateResolver(int? conversationOverride, int? agentWindow, int? modelWindow)
+    private static SessionContextWindowResolver CreateResolver(int? conversationOverride, int? agentWindow, int? modelWindow,
+        CompactionPolicySource source = CompactionPolicySource.Conversation)
     {
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(It.IsAny<AgentId>())).Returns(NewDescriptor(agentWindow));
@@ -327,7 +366,11 @@ public sealed class ScopedCompactionWindowTests
             NullLogger<SessionContextWindowResolver>.Instance,
             registry.Object,
             conversations.Object,
-            client);
+            client,
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions
+            {
+                PolicySource = source
+            }));
     }
 
     private static AgentDescriptor NewDescriptor(int? contextWindow) => new()

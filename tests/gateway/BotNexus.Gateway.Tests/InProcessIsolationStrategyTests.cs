@@ -585,6 +585,27 @@ public sealed class InProcessIsolationStrategyTests
             .Select(call => call.Id).Order().ShouldBe(new[] { "a", "b" });
         providerMessages.OfType<ToolResultMessage>().Select(message => message.ToolCallId).Order()
             .ShouldBe(new[] { "a", "b" });
+        var model = new LlmModel("projection", "Projection", "openai-responses", "openai", "https://example.test",
+            false, ["text"], new ModelCost(0, 0, 0, 0), 128_000, 4096);
+        var responses = BotNexus.Agent.Providers.Core.Streaming.ResponsesMessageConverter
+            .ConvertMessages(providerMessages, model);
+        responses.Where(item => item?["type"]?.GetValue<string>() == "function_call")
+            .Select(item => item?["call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        responses.Where(item => item?["type"]?.GetValue<string>() == "function_call_output")
+            .Select(item => item?["call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        var completions = BotNexus.Agent.Providers.Core.Streaming.CompletionsMessageConverter.Convert(
+            null, model, providerMessages, new BotNexus.Agent.Providers.Core.Compatibility.OpenAICompletionsCompat());
+        completions.Where(item => item?["role"]?.GetValue<string>() == "tool")
+            .Select(item => item?["tool_call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        var anthropic = BotNexus.Agent.Providers.Anthropic.AnthropicMessageConverter.ConvertMessages(
+            providerMessages, model with { Api = "anthropic-messages", Provider = "anthropic" }, isOAuthToken: false);
+        var blocks = anthropic.Select(message => message["content"]).OfType<List<object>>()
+            .SelectMany(content => content)
+            .OfType<Dictionary<string, object?>>().ToArray();
+        blocks.Where(block => (string?)block["type"] == "tool_use")
+            .Select(block => (string?)block["id"]).Order().ShouldBe(["a", "b"]);
+        blocks.Where(block => (string?)block["type"] == "tool_result")
+            .Select(block => (string?)block["tool_use_id"]).Order().ShouldBe(["a", "b"]);
     }
 
     [Fact]
@@ -599,6 +620,16 @@ public sealed class InProcessIsolationStrategyTests
                 Role = MessageRole.Tool, Content = "", ToolName = "read",
                 ToolCallId = "interrupted-read", ToolArgs = "{\"path\":\"build.log\"}", Kind = MessageKind.ToolStart
             },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "completed-read", ToolArgs = "{\"path\":\"other.log\"}", Kind = MessageKind.ToolStart
+            },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "completed evidence", ToolName = "read",
+                ToolCallId = "completed-read", Kind = MessageKind.ToolResult
+            },
             new SessionEntry { Role = MessageRole.User, Content = "Continue safely after the interruption." }
         };
         var strategy = CreateStrategyWithRegisteredModel();
@@ -610,13 +641,15 @@ public sealed class InProcessIsolationStrategyTests
         });
 
         var messages = GetMessages(handle);
-        messages.OfType<ToolResultAgentMessage>().ShouldBeEmpty();
-        messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? []).ShouldBeEmpty();
+        messages.OfType<ToolResultAgentMessage>().Select(message => message.ToolCallId).ShouldBe(["completed-read"]);
+        messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? [])
+            .Select(call => call.Id).ShouldBe(["completed-read"]);
+        messages.OfType<ToolResultAgentMessage>().Single().Result.Content.Single().Value.ShouldBe("completed evidence");
         messages.OfType<AssistantAgentMessage>().ShouldContain(message =>
             message.Content.Contains("interrupted-read", StringComparison.Ordinal) &&
             message.Content.Contains("unknown", StringComparison.OrdinalIgnoreCase));
         messages.OfType<AgentCoreUserMessage>().Last().Content.ShouldBe("Continue safely after the interruption.");
-        history.Length.ShouldBe(4);
+        history.Length.ShouldBe(6);
         history[2].IsHistory.ShouldBeFalse();
     }
 
@@ -635,13 +668,23 @@ public sealed class InProcessIsolationStrategyTests
             .ReturnsAsync(new ScopedCompactionCeiling(0, "conversation"))
             .ThrowsAsync(new OperationCanceledException());
         var observed = new List<int?>();
+        var observedWindows = new List<int>();
+        var windowReads = 0;
+        var windowResolver = new Mock<ISessionContextWindowResolver>();
+        windowResolver.Setup(value => value.ResolveAsync(session.AgentId, session.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++windowReads * 1000);
         var compactor = new Mock<ISessionCompactor>();
         compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
-            .Callback<Session, CompactionOptions>((_, options) => observed.Add(options.CompactionTokenCeiling)).Returns(false);
+            .Callback<Session, CompactionOptions>((_, options) =>
+            {
+                observed.Add(options.CompactionTokenCeiling);
+                observedWindows.Add(options.ContextWindowTokens);
+            }).Returns(false);
         var coordinator = new Mock<ISessionCompactionCoordinator>();
         var services = new ServiceCollection();
         services.AddSingleton(store.Object);
         services.AddSingleton(resolver.Object);
+        services.AddSingleton(windowResolver.Object);
         services.AddSingleton(compactor.Object);
         services.AddSingleton(coordinator.Object);
         services.AddSingleton<IOptionsMonitor<CompactionOptions>>(new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
@@ -652,6 +695,7 @@ public sealed class InProcessIsolationStrategyTests
         hook.ShouldNotBeNull();
         for (var turn = 0; turn < 3; turn++) (await hook(CancellationToken.None)).ShouldBeNull();
         observed.ShouldBe(new int?[] { 100, 200, null });
+        observedWindows.ShouldBe([1000, 2000, 3000]);
         (await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None))).Message.ShouldContain("policy");
         (await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None))).Message.ShouldContain("policy");
         using var cancellation = new CancellationTokenSource();

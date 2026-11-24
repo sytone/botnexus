@@ -60,15 +60,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
 
         var options = resolvedOptions ?? _options.CurrentValue;
 
-        // When the user explicitly requests compaction, override PreservedTurns
-        // to 0 so the compactor always has entries to summarise regardless of
-        // how few user turns exist. The user's intent ("compact now") supersedes
-        // the automatic heuristic. PreservedTurns=0 causes SplitHistory to place
-        // ALL visible entries in toSummarize (the summary captures full context
-        // including the most recent exchange).
         if (force)
         {
-            options = options with { PreservedTurns = 0 };
+            options = options.ForManualCompaction();
         }
         var sessionId = session.SessionId;
 

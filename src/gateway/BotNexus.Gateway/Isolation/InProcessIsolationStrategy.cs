@@ -542,7 +542,7 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             }
 
             initialMessages = summaries.Count > 0
-                ? ConvertCompactedHistoryToAgentMessages(context.History)
+                ? ConvertCompactedHistoryToAgentMessages(context.History, recoverInterruptedTools: true)
                 : resumeEntries.Select(ConvertSessionEntryToAgentMessage).OfType<AgentMessage>().ToList();
 
             _logger.LogInformation(
@@ -560,15 +560,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
         var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
         var compactionCeilingResolver = _serviceProvider.GetService<ISessionCompactionCeilingResolver>();
+        var compactionWindowResolver = _serviceProvider.GetService<ISessionContextWindowResolver>();
         if (compactor is not null && compactionCoordinator is not null && compactionOptions is not null && sessionStore is not null)
         {
             var compactSessionId = context.SessionId;
             var compactAgentId = descriptor.AgentId;
-            // #2896: this path has already resolved the effective window through
-            // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
-            // rather than re-reading the stores, falling back to the registered model's own window.
-            // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
-            var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
+            // Resolve live policy on every check. Legacy hosts without a resolver use the
+            // handle's known capacity (or its scoped budget only when inheritance is selected).
             maybeCompactAsync = async cancellationToken =>
             {
                 GatewaySession? liveSession = null;
@@ -594,7 +592,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                         }
 
                         // Resolve EVERY check from the live conversation; never cache a ceiling.
-                        scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                        var currentOptions = compactionOptions.CurrentValue;
+                        var scopedContextWindow = compactionWindowResolver is not null
+                            ? await compactionWindowResolver.ResolveAsync(
+                                compactAgentId, liveSession.ConversationId, cancellationToken).ConfigureAwait(false)
+                            : currentOptions.PolicySource == CompactionPolicySource.Conversation
+                                ? contextBudget.EffectiveWorkingBudgetTokens
+                                : contextBudget.ModelContextWindowTokens;
+                        scopedOptions = ScopedCompactionWindow.Apply(currentOptions, scopedContextWindow);
                         if (compactionCeilingResolver is not null)
                         {
                             var ceiling = await compactionCeilingResolver.ResolveAsync(
@@ -1215,7 +1220,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         return conversations.FirstOrDefault(conversation => conversation.ActiveSessionId == sessionId)?.ConversationId;
     }
 
-    private static List<AgentMessage> ConvertCompactedHistoryToAgentMessages(IReadOnlyList<SessionEntry> history)
+    private static List<AgentMessage> ConvertCompactedHistoryToAgentMessages(
+        IReadOnlyList<SessionEntry> history, bool recoverInterruptedTools = false)
     {
         var visible = SessionContextProjector.ProjectForLiveContext(history);
         var starts = new Dictionary<string, SessionEntry>(StringComparer.Ordinal);
@@ -1230,7 +1236,8 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
             if (!target.TryAdd(entry.ToolCallId, entry))
                 throw new InvalidOperationException($"Retained tool evidence has duplicate rows for '{entry.ToolCallId}'.");
         }
-        if (starts.Count != results.Count || starts.Keys.Any(id => !results.ContainsKey(id)))
+        if (results.Keys.Any(id => !starts.ContainsKey(id)) ||
+            (!recoverInterruptedTools && starts.Keys.Any(id => !results.ContainsKey(id))))
             throw new InvalidOperationException("Retained tool evidence contains an unfinished or orphaned call.");
 
         var messages = new List<AgentMessage>();
@@ -1244,7 +1251,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     throw new InvalidOperationException("Retained tool evidence is missing its name or arguments.");
                 var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(entry.ToolArgs)
                     ?? throw new InvalidOperationException($"Retained tool arguments are null for '{id}'.");
-                var result = results[id];
+                if (!results.TryGetValue(id, out var result))
+                {
+                    // A cold handle cannot finish the old process's call. Keep its actual
+                    // arguments and unknown outcome without fabricating a provider tool result.
+                    messages.Add(new AssistantAgentMessage(
+                        $"Interrupted tool call '{entry.ToolName}' (id '{id}') has an unknown outcome; " +
+                        "no result was recorded. Inspect existing evidence before repeating side effects. " +
+                        $"Arguments: {entry.ToolArgs}"));
+                    continue;
+                }
 
                 // Typed audit rows preserve the observed call and result, but not the original
                 // assistant batch. Replay complete exchanges rather than orphaned tool results.

@@ -66,6 +66,9 @@ public sealed class ConfigSecretAnnotationFitnessArchitectureTests
         // window size, not credentials. Nothing sensitive to redact.
         "CompactionOptions.TokenThresholdRatio",
         "CompactionOptions.ContextWindowTokens",
+        // #5182: a positive numeric retained-context budget, never an authentication token.
+        // Redacting it would replace an editable integer with "***" and break configuration.
+        "CompactionOptions.PreservedTailTokens",
 
         // #4888: nullable positive token-count trigger ceilings, not authentication tokens.
         // All three scopes must remain numeric and unmasked for schema-driven editing and

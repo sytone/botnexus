@@ -101,9 +101,11 @@ public sealed class ScopedCompactionCoordinatorTests
         compactor.ShouldCompact(session.Session, global).ShouldBeFalse();
         compactor.ShouldCompact(session.Session, scoped).ShouldBeTrue();
         var baseline = await compactor.CompactAsync(session, global, CancellationToken.None);
-        baseline.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
+        // The independent retained-token budget now bounds even a direct below-trigger cut.
+        // Above, ShouldCompact still pins the different automatic scheduling decisions.
+        baseline.Succeeded.ShouldBeTrue();
         baseline.TokensBefore.ShouldBeInRange(84_000, 86_000);
-        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Never);
+        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Once);
         var monitor = new Mock<IOptionsMonitor<CompactionOptions>>();
         monitor.SetupGet(value => value.CurrentValue).Returns(global);
         var coordinator = CreateCoordinator(compactor, monitor.Object);
@@ -113,11 +115,12 @@ public sealed class ScopedCompactionCoordinatorTests
         outcome.Succeeded.ShouldBeTrue();
         outcome.Applied.ShouldBeTrue();
         outcome.SkipReason.ShouldBeNull();
-        outcome.EntriesSummarized.ShouldBe(21);
-        outcome.EntriesPreserved.ShouldBe(0);
+        outcome.EntriesSummarized.ShouldBe(18);
+        outcome.EntriesPreserved.ShouldBe(3);
+        session.GetHistorySnapshot().ShouldContain(entry => entry.Content == "investigate" && !entry.IsHistory);
         outcome.TokensAfter.ShouldBeLessThan(outcome.TokensBefore);
         session.GetHistorySnapshot().Count(entry => entry.IsCompactionSummary && !entry.IsHistory).ShouldBe(1);
-        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Once);
+        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Exactly(2));
     }
 
     private static GatewaySession NewSession() => new()

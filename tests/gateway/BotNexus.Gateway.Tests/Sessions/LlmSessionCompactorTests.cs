@@ -67,6 +67,28 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
     }
 
     [Fact]
+    public async Task CompactAsync_SmallCeiling_BoundsTheSummarizationRequestOutput()
+    {
+        var session = CreateSession(("user", "Continue investigating."));
+        AddToolPairs(session, 60);
+        SimpleStreamOptions? captured = null;
+        var compactor = CreateCompactorCapturingPrompt("Evidence remains at artifact://build/42.",
+            _ => { }, options => captured = options);
+
+        var result = await compactor.CompactAsync(session, new CompactionOptions
+        {
+            CompactionTokenCeiling = 5000, MaxSummaryChars = 1200, SummarizationModel = TestModel.Id
+        });
+
+        result.Succeeded.ShouldBeTrue();
+        var request = captured.ShouldNotBeNull();
+        var maxTokens = request.MaxTokens.ShouldNotBeNull();
+        maxTokens.ShouldBeInRange(1, 1200);
+        maxTokens.ShouldBeLessThan(TestModel.MaxTokens);
+        result.TokensAfter.ShouldBeLessThan(2500);
+    }
+
+    [Fact]
     public async Task CompactAsync_SingleToolHeavyTurn_BoundsTailWithoutLosingIntentOrToolPairs()
     {
         var session = CreateSession(("user", "Inspect artifact://build/42 and fix the failing build."));
@@ -189,6 +211,86 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         result.Succeeded.ShouldBeFalse();
         result.SkipReason.ShouldBe(CompactionSkipReason.MandatoryContextExceedsBudget);
         session.GetHistorySnapshot().ShouldBe(original);
+    }
+
+    [Fact]
+    public async Task CompactAsync_MatchedTurnOnlyBaseline_ReducesTotalEstimatedInputIncludingSummarization()
+    {
+        const string summary = "Evidence and completed work remain at artifact://build/42.";
+        var baseline = CreateSession(("user", "Investigate the long-running build."));
+        var candidate = CreateSession(("user", "Investigate the long-running build."));
+        long baselineHistoryInput = 0, candidateHistoryInput = 0;
+        long baselineSummaryInput = 0, candidateSummaryInput = 0;
+        var baselineCuts = 0;
+        var candidateCuts = 0;
+        var compactor = CreateCompactorCapturingPrompt(summary,
+            prompt => candidateSummaryInput += BotNexus.Domain.Text.TokenEstimator.EstimateTokens(prompt));
+        var options = new CompactionOptions
+        {
+            ContextWindowTokens = 32_000, LargestEntryBytesThreshold = 0, SummarizationModel = TestModel.Id
+        };
+        for (var step = 1; step <= 160; step++)
+        {
+            if (step > 1 && step % 8 == 1)
+            {
+                var request = new SessionEntry { Role = MessageRole.User, Content = $"Continue build phase {step}." };
+                baseline.AddEntry(request);
+                candidate.AddEntry(request with { });
+            }
+            AddToolPairs(baseline, 1, step);
+            AddToolPairs(candidate, 1, step);
+            if (compactor.ShouldCompact(baseline.Session, options))
+            {
+                // Reference the pre-#5182 turn-only split and its decreasing-turn fallback.
+                // Both policies use identical inputs, formatter, threshold and summary text.
+                var visible = baseline.GetHistorySnapshot().ToArray();
+                var userIndices = visible.Select((entry, index) => (entry, index))
+                    .Where(item => item.entry.Role.Equals(MessageRole.User)).Select(item => item.index).Reverse().ToArray();
+                var cut = 0;
+                for (var turns = options.PreservedTurns; turns >= 0 && cut == 0; turns--)
+                    cut = turns == 0 ? visible.Length : userIndices.Skip(turns - 1).FirstOrDefault();
+                var folded = visible.Take(cut).ToList();
+                var prior = folded.FirstOrDefault(entry => entry.IsCompactionSummary)?.Content;
+                if (prior?.StartsWith(LlmSessionCompactor.SummaryPrefix, StringComparison.Ordinal) == true)
+                    prior = prior[LlmSessionCompactor.SummaryPrefix.Length..].TrimStart('\n');
+                baselineSummaryInput += BotNexus.Domain.Text.TokenEstimator.EstimateTokens(
+                    LlmSessionCompactor.BuildSummarizationPrompt(folded, options.MaxSummaryChars, prior));
+                baseline.ReplaceHistory(new[]
+                {
+                    new SessionEntry
+                    {
+                        Role = MessageRole.System, Content = LlmSessionCompactor.SummaryPrefix + "\n" + summary,
+                        IsCompactionSummary = true
+                    }
+                }.Concat(visible.Skip(cut)).ToArray());
+                baselineCuts++;
+            }
+            if (compactor.ShouldCompact(candidate.Session, options))
+            {
+                var result = await compactor.CompactAsync(candidate, options);
+                result.Succeeded.ShouldBeTrue();
+                candidate.ReplaceHistory(result.CompactedHistory.ShouldNotBeNull());
+                compactor.ShouldCompact(candidate.Session, options).ShouldBeFalse();
+                candidateCuts++;
+            }
+            baselineHistoryInput += LlmSessionCompactor.EstimateVisibleTokenCount(baseline.Session);
+            candidateHistoryInput += LlmSessionCompactor.EstimateVisibleTokenCount(candidate.Session);
+        }
+        var baselineTotal = baselineHistoryInput + baselineSummaryInput;
+        var candidateTotal = candidateHistoryInput + candidateSummaryInput;
+        baselineCuts.ShouldBeGreaterThan(0);
+        candidateCuts.ShouldBeGreaterThan(0);
+        candidateTotal.ShouldBeLessThan(baselineTotal * 9 / 10,
+            "at least 10% fewer estimated history-plus-summary input tokens on this matched fixture");
+        candidate.GetHistorySnapshot().Count(entry => entry.Kind == MessageKind.ToolResult).ShouldBe(160);
+        output.WriteLine(
+            "matched steps=160; baseline history={0}, summary_input={1}, cuts={2}; " +
+            "bounded history={3}, summary_input={4}, cuts={5}; estimated input reduction={6:F1}%; " +
+            "summary output={7}/{8} estimated tokens (baseline/bounded); provider billing/cache not measured",
+            baselineHistoryInput, baselineSummaryInput, baselineCuts, candidateHistoryInput, candidateSummaryInput,
+            candidateCuts, 100.0 * (baselineTotal - candidateTotal) / baselineTotal,
+            baselineCuts * BotNexus.Domain.Text.TokenEstimator.EstimateTokens(summary),
+            candidateCuts * BotNexus.Domain.Text.TokenEstimator.EstimateTokens(summary));
     }
 
     [Fact]
@@ -677,7 +779,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         {
             PreservedTurns = 0,
             SummarizationModel = TestModel.Id
-        });
+        }.ForManualCompaction());
 
         result.Succeeded.ShouldBeTrue();
         result.CompactedHistory.ShouldNotBeNull();
@@ -1684,7 +1786,8 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
 
     private static LlmSessionCompactor CreateCompactorCapturingPrompt(
         string summary,
-        Action<string> onPromptCaptured)
+        Action<string> onPromptCaptured,
+        Action<SimpleStreamOptions?>? onOptionsCaptured = null)
     {
         var providers = new ApiProviderRegistry();
         var models = new ModelRegistry();
@@ -1696,8 +1799,9 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
                 It.IsAny<LlmModel>(),
                 It.IsAny<Context>(),
                 It.IsAny<SimpleStreamOptions?>()))
-            .Returns<LlmModel, Context, SimpleStreamOptions?>((_, ctx, _) =>
+            .Returns<LlmModel, Context, SimpleStreamOptions?>((_, ctx, options) =>
             {
+                onOptionsCaptured?.Invoke(options);
                 // Capture the summarization prompt from the first user message
                 var firstUser = ctx.Messages.OfType<UserMessage>().FirstOrDefault();
                 if (firstUser?.Content is UserMessageContent umc)

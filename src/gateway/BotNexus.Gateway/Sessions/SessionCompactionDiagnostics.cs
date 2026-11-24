@@ -39,11 +39,18 @@ public sealed class SessionCompactionDiagnostics(
         var ceiling = await ceilingResolver.ResolveAsync(agentId, conversationId, cancellationToken).ConfigureAwait(false);
         options = options with { CompactionTokenCeiling = ceiling.Tokens };
         var effectiveThreshold = CompactionThreshold.Resolve(options);
-        var ratioThreshold = CompactionThreshold.Resolve(options with { CompactionTokenCeiling = null });
+        var ratioThreshold = CompactionThreshold.Resolve(options with
+        {
+            PolicySource = CompactionPolicySource.Model, CompactionTokenCeiling = null
+        });
         var measurement = LlmSessionCompactor.MeasureTokens(session.Session,
             LlmSessionCompactor.EstimateVisibleTokenCount(session.Session));
         return new CompactionPolicyDiagnostics
         {
+            PolicySource = options.PolicySource,
+            ConfiguredContextWindowTokens = options.ConfiguredWindowTokens ?? options.ContextWindowTokens,
+            PreservedTailTokens = options.PreservedTailTokens,
+            PostCompactionTargetTokens = Math.Max(1, effectiveThreshold / 2),
             ScopedContextWindowTokens = scopedWindow,
             ContextWindowTokens = options.ContextWindowTokens,
             TokenThresholdRatio = options.TokenThresholdRatio,

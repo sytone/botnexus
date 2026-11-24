@@ -96,7 +96,7 @@ public sealed class ReadTool : IAgentTool, IContextReplacementAwareTool
     /// <returns>The new result.</returns>
     public Tool Definition => new(
         Name,
-        "Read file content with optional offset/limit, or list directory entries. Prefer offset/limit over whole-file reads on large files, and do not re-read a file you have already read in this session unless it changed.",
+        "Read file content with optional offset/limit, or list directory entries. Prefer offset/limit over whole-file reads on large files. Avoid unchanged repeat reads while their content is still in the current context; re-read when compaction or context replacement removed the content.",
         JsonDocument.Parse("""
             {
               "type": "object",
