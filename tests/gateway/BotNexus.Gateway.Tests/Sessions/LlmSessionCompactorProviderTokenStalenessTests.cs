@@ -75,6 +75,7 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
         var result = await compactor.CompactAsync(session, LiveLikeOptions());
 
         result.Succeeded.ShouldBeTrue();
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
         session.Metadata.ContainsKey(Key).ShouldBeFalse();
     }
 
@@ -94,6 +95,7 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue();
         result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
 
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
     }
@@ -108,7 +110,9 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
 
         var compactor = CreateCompactor(SummarizingProvider());
 
-        (await compactor.CompactAsync(session, LiveLikeOptions())).Succeeded.ShouldBeTrue();
+        var result = await compactor.CompactAsync(session, LiveLikeOptions());
+        result.Succeeded.ShouldBeTrue();
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
 
         session.Metadata.ContainsKey(Key).ShouldBeFalse();
         session.Metadata["modelOverride"].ShouldBe("some-model");

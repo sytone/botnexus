@@ -43,9 +43,24 @@ public static class SessionCompactionExtensions
                 "Check CompactionResult.Succeeded before calling TryApplyCompactionResult.");
         }
 
-        return session.TryReplaceHistoryFromSnapshot(
+        var outcome = session.TryReplaceHistoryFromSnapshot(
             result.CompactedHistory,
             result.SnapshotDestructiveVersion,
             result.SnapshotHistoryCount);
+        if (outcome != HistoryReplaceOutcome.Aborted && result.MetadataChanges is not null)
+        {
+            foreach (var change in result.MetadataChanges)
+            {
+                var present = session.Metadata.TryGetValue(change.Key, out var current);
+                if (present != change.ExpectedPresent || (present && !ReferenceEquals(current, change.ExpectedValue)))
+                    continue;
+
+                if (change.Replacement is null)
+                    session.Metadata.Remove(change.Key);
+                else
+                    session.Metadata[change.Key] = change.Replacement;
+            }
+        }
+        return outcome;
     }
 }

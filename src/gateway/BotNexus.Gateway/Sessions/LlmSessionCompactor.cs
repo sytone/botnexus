@@ -465,6 +465,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // #2522: normalise the keep-recent budget into the same units the trigger fired in. When no
         // provider prompt-token count is reachable this returns options.PreservedTurns unchanged.
         // The token retention cap below applies independently to both cases.
+        var hadProviderTokens = session.Metadata.TryGetValue(ProviderPromptTokensMetadataKey, out var providerTokens);
+        var hadByteSignature = session.Metadata.TryGetValue(IneffectiveByteCompactionMetadataKey, out var byteSignature);
         var planMeasurement = MeasureTokens(session.Session, EstimateVisibleTokenCountFromEntries(visible));
         var effectivePreservedTurns = ScalePreservedTurns(options.PreservedTurns, planMeasurement);
         if (effectivePreservedTurns != options.PreservedTurns)
@@ -756,49 +758,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Reset circuit breaker on success.
         _breaker.TryRemove(sessionKey, out _);
 
-        // #3592: the provider prompt-token count describes the LAST COMPLETED PROVIDER REQUEST, not
-        // the current context. This cut has just shed context, so from here until the next completed
-        // provider turn the stored number describes a transcript that no longer exists. Its only
-        // writer (ProviderTokenUsageRecorder.Record) refuses to store a non-positive value, so no
-        // code path can reset it through the producer - leaving it in place kept `providerTrigger`
-        // true on the stale measurement, re-engaging the #1574 `toSummarize.Count == 0` fallback and
-        // walking PreservedTurns down to 1 trying to shed context that is already shed.
-        //
-        // Clear ONLY here, at the successful commit point. Skipped/Failed outcomes leave history
-        // unchanged, so their measurement is still accurate and must survive. Absence is already the
-        // well-defined "unavailable" state on the read side (ReadProviderPromptTokens returns null,
-        // MeasureTokens renders `providerPromptTokens=unavailable`), so the session degrades to
-        // estimate-only triggering for exactly one turn - never to a zero masquerading as a
-        // measurement. Remove is a no-op when the key was never present.
-        session.Metadata.Remove(ProviderPromptTokensMetadataKey);
-
-        // #3681: record whether this SUCCESSFUL cut actually moved the byte signal. The #1599 bloat
-        // trigger evaluates the largest LLM-visible entry, but SplitHistory always preserves the most
-        // recent PreservedTurns user turns within the tail budget - so an oversized entry that fits survives the cut and
-        // remains the maximum. That makes ShouldCompact return true again next turn for the same reason,
-        // with the transcript growing each cycle, and because the cut SUCCEEDED neither the circuit
-        // breaker (cleared just above) nor the #2460 no-split guard can bound it.
-        //
-        // Record the fingerprint of the still-oversized visible population so the byte signal alone is
-        // suppressed for exactly that unchanged population; clear it when the cut did work, so the
-        // suppression can never outlive the condition that justified it.
+        // Stage trigger changes until the history snapshot actually applies. A newer metadata
+        // value must survive even when it happens to contain the same token count.
         var residualSignature = BuildOversizedSignature(newHistory, options.LargestEntryBytesThreshold);
-        if (residualSignature is not null)
-        {
-            session.Metadata[IneffectiveByteCompactionMetadataKey] = residualSignature;
-            _logger.LogInformation(
-                "Compaction of session {SessionId} succeeded but did not reduce the largest visible entry " +
-                "below the {ByteThreshold}-byte threshold (the oversized entry is inside the preserved " +
-                "tail). Suppressing the byte trigger for this unchanged entry; token and provider-token " +
-                "pressure remain active.",
-                session.SessionId,
-                options.LargestEntryBytesThreshold);
-        }
-        else
-        {
-            session.Metadata.Remove(IneffectiveByteCompactionMetadataKey);
-        }
-
         return CompactionResult.ForSuccess(
             summary,
             newHistory,
@@ -807,7 +769,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             snapshotDestructiveVersion: snap.DestructiveVersion,
-            snapshotHistoryCount: snap.Count);
+            snapshotHistoryCount: snap.Count) with
+        {
+            MetadataChanges =
+            [
+                new(ProviderPromptTokensMetadataKey, hadProviderTokens, providerTokens, null),
+                new(IneffectiveByteCompactionMetadataKey, hadByteSignature, byteSignature, residualSignature)
+            ]
+        };
     }
 
     /// <summary>

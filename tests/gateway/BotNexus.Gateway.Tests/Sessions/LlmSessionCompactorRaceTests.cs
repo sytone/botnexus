@@ -151,6 +151,52 @@ public sealed class LlmSessionCompactorRaceTests
     // ─── Abort scenarios — destructive change happened ──────────────────────────
 
     [Fact]
+    public async Task SuccessfulResult_DoesNotChangeTriggerMetadataUntilApplied()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", new string('a', 4000)),
+            ("user", new string('b', 2000)));
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 1000;
+        var harness = new SlowLlmHarness(summary: "summary");
+        var compactor = harness.CreateCompactor();
+
+        var resultTask = compactor.CompactAsync(session, DefaultOptions with { LargestEntryBytesThreshold = 512 });
+        harness.WaitUntilEntered();
+        harness.Release();
+        var result = await resultTask;
+
+        result.Succeeded.ShouldBeTrue();
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(1000);
+        session.Metadata.ShouldNotContainKey(LlmSessionCompactor.IneffectiveByteCompactionMetadataKey);
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        session.Metadata.ShouldNotContainKey(LlmSessionCompactor.ProviderPromptTokensMetadataKey);
+        session.Metadata.ShouldContainKey(LlmSessionCompactor.IneffectiveByteCompactionMetadataKey);
+    }
+
+    [Fact]
+    public async Task ProviderUsageUpdatedDuringSummary_IsNotClearedBySuccessfulApply()
+    {
+        var session = CreateSession(
+            ("user", "u1"),
+            ("assistant", new string('a', 4000)),
+            ("user", "u2"));
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 1000;
+        var harness = new SlowLlmHarness(summary: "summary");
+        var compactor = harness.CreateCompactor();
+
+        var resultTask = compactor.CompactAsync(session, DefaultOptions);
+        harness.WaitUntilEntered();
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey] = 2000;
+        harness.Release();
+        var result = await resultTask;
+
+        result.Succeeded.ShouldBeTrue();
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(2000);
+    }
+
+    [Fact]
     public async Task DestructiveChange_DuringSummary_DoesNotChangeTriggerMetadata()
     {
         var session = CreateSession(
