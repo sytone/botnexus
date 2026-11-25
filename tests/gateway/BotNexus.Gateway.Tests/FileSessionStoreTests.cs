@@ -48,6 +48,49 @@ public sealed class FileSessionStoreTests
         }
     }
 
+    [Fact]
+    public async Task CompactionSave_ProviderMeasurementDuringHistoryWrite_IsPersisted()
+    {
+        using var fixture = new StoreFixture();
+        var originalStore = fixture.CreateStore();
+        var session = await originalStore.GetOrCreateAsync(SessionId.From("compaction-race"), AgentId.From("agent-a"));
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        await originalStore.SaveAsync(session);
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        var fence = SessionWriteFence.Capture(session);
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+
+        var file = new Moq.Mock<System.IO.Abstractions.IFile>();
+        var fs = new Moq.Mock<System.IO.Abstractions.IFileSystem>();
+        fs.SetupGet(x => x.Directory).Returns(fixture.FileSystem.Directory);
+        fs.SetupGet(x => x.File).Returns(file.Object);
+        fs.SetupGet(x => x.FileStream).Returns(fixture.FileSystem.FileStream);
+        file.Setup(x => x.ReadAllLinesAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, CancellationToken token) => fixture.FileSystem.File.ReadAllLinesAsync(path, token));
+        file.Setup(x => x.ReadAllTextAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, CancellationToken token) => fixture.FileSystem.File.ReadAllTextAsync(path, token));
+        file.Setup(x => x.WriteAllTextAsync(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), Moq.It.IsAny<CancellationToken>()))
+            .Returns((string path, string text, CancellationToken token) => fixture.FileSystem.File.WriteAllTextAsync(path, text, token));
+        file.Setup(x => x.Exists(Moq.It.IsAny<string>())).Returns((string path) => fixture.FileSystem.File.Exists(path));
+        file.Setup(x => x.Delete(Moq.It.IsAny<string>())).Callback((string path) => fixture.FileSystem.File.Delete(path));
+        file.Setup(x => x.Move(Moq.It.IsAny<string>(), Moq.It.IsAny<string>(), true))
+            .Callback((string source, string target, bool overwrite) =>
+            {
+                fixture.FileSystem.File.Move(source, target, overwrite);
+                if (target.EndsWith(".jsonl", StringComparison.Ordinal))
+                    session.Metadata["lastProviderPromptTokens"] = 2000;
+            });
+        var store = new FileSessionStore(fixture.StorePath, NullLogger<FileSessionStore>.Instance, fs.Object, fixture.Conversations);
+
+        (await store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null)]))
+            .ShouldBe(SessionSaveOutcome.Persisted);
+
+        session.Metadata["lastProviderPromptTokens"].ShouldBe(2000);
+        var cold = (await fixture.CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("2000");
+    }
+
     [Theory]
     [InlineData(false, "append")]
     [InlineData(true, "append")]
