@@ -67,11 +67,16 @@ public sealed class ConfiguredScopedCompactionTests
             });
         var client = new LlmClient(new ApiProviderRegistry(), models);
         var resolver = new SessionContextWindowResolver(NullLogger<SessionContextWindowResolver>.Instance,
-            registry.Object, conversations.Object, client);
+            registry.Object, conversations.Object, client,
+            new TestOptionsMonitor<CompactionOptions>(new CompactionOptions
+            {
+                PolicySource = CompactionPolicySource.Conversation
+            }));
         var resolved = await resolver.ResolveAsync(AgentId.From("a"), ConversationId.From("c"));
         resolved.ShouldBe(expectedWindow);
         var options = new CompactionOptions
         {
+            PolicySource = CompactionPolicySource.Conversation,
             ContextWindowTokens = 900_000, TokenThresholdRatio = 0.6, LargestEntryBytesThreshold = 0
         };
         var scoped = ScopedCompactionWindow.Apply(options, resolved);

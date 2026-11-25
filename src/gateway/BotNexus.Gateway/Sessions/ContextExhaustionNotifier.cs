@@ -116,7 +116,7 @@ public sealed class ContextExhaustionNotifier : IContextExhaustionNotifier
         try
         {
             return await _windowResolver
-                .ResolveAsync(session.AgentId, session.ConversationId, cancellationToken)
+                .ResolveWorkingWindowAsync(session.AgentId, session.ConversationId, cancellationToken)
                 .ConfigureAwait(false);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)

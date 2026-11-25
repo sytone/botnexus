@@ -138,10 +138,10 @@ dotnet build src/dirs.proj
 # Preview impacted selection only; do not remove -DryRun on a live-gateway host
 scripts/repo/test-impacted.ps1 -DryRun
 
-# Normal candidate gate (remote by default)
+# Configured workstation candidate gate (not the cloud-session route)
 scripts/repo/Invoke-PreCommitValidation.ps1
 
-# Explicit remote non-browser CORE execution for this worktree
+# Configured workstation: explicit remote non-browser CORE execution
 scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>
 
 # Documentation-only gate (npm ci first if dependencies are not installed)
@@ -150,7 +150,21 @@ npm run docs:build
 
 Replace `<worktree>` with the task worktree path. `src/dirs.proj` and `tests/dirs.proj` discover `.csproj` files recursively, excluding `bin` and `obj`; root `dirs.proj` composes both plus tooling. Do not maintain a separate `.slnx` project list for this traversal.
 
-Normal code validation requires the remote non-browser core suite. Browser-emulated E2E remains quarantined under #3601; `-Mode full` and `-Mode playwright` are explicit diagnostics, not normal gates or proof that the quarantine is cleared. Documentation-only changes normally require the documentation build, not remote tests; an explicit task requirement to run remote CORE still applies. Never substitute local `dotnet test`, `test.ps1`, or executing `test-impacted.ps1` on a live-gateway host. Follow the root `AGENTS.md` for strict validation, receipts, and the explicit local fallback when remote infrastructure is genuinely unavailable.
+Cloud-hosted and remote coding-agent sessions use the PR's GitHub Actions **instead of**
+the Azure/container and workstation gates above. Push the committed feature branch and
+open or update its PR to trigger validation; inspect `CI: Build & Test`'s `core-tests`
+job, its fail-closed result contract and the other applicable required checks. Keep
+validation pending until the current candidate's checks pass. Missing host Azure tooling,
+credentials or receipts is not a blocker, and local tests are not a substitute. Follow
+the root [Cloud-session validation](../AGENTS.md#cloud-session-validation) rules.
+
+Configured workstations retain the remote non-browser core gate and receipt rules.
+Browser-emulated E2E remains quarantined under #3601; `-Mode full` and `-Mode playwright`
+are explicit diagnostics, not normal gates or proof that the quarantine is cleared.
+Documentation-only changes use documentation validation, not CORE; mixed code and docs
+changes require CORE through the session-appropriate route. Never substitute local
+`dotnet test`, `test.ps1`, or executing `test-impacted.ps1` on a live-gateway host.
+Follow the root `AGENTS.md` for the explicitly selected, safe workstation local fallback.
 
 ## Test Conventions
 

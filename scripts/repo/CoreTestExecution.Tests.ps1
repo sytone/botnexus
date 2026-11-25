@@ -79,6 +79,10 @@ Assert-True ($workflow -notmatch 'run: dotnet test tests/dirs\.proj --no-build -
 Assert-True ($workflow -match "CompletionPath.*completion-core\.json") 'GitHub CORE contract validation must require the completion receipt.'
 $coreJob = [regex]::Match($workflow, '(?ms)^  core-tests:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
 Assert-True ($coreJob -match '(?ms)^\s+- name: Provision file watcher capacity\r?\n(?:(?!^\s+- name:).)*^\s+run: sudo sysctl -w fs\.inotify\.max_user_instances=8192 fs\.inotify\.max_user_watches=524288\s*$.*^\s+- name: Test \(core\)\s*$') 'GitHub CORE must provision Linux file watcher capacity before running tests.'
+foreach ($jobName in @('core-tests', 'full-tests')) {
+    $job = [regex]::Match($workflow, "(?ms)^  ${jobName}:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*").Value
+    Assert-True ($job -match '(?s)sudo sysctl -w fs\.inotify\.max_user_instances=8192 fs\.inotify\.max_user_watches=524288.*Invoke-BoundedCoreTests\.ps1') "$jobName must provision the shared CORE watcher capacity before testing."
+}
 function Test-CoverageOidcContract([string]$WorkflowText) {
     $fullJob = [regex]::Match($WorkflowText, '(?ms)^  full-tests:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
     if ([string]::IsNullOrWhiteSpace($fullJob)) { return $false }

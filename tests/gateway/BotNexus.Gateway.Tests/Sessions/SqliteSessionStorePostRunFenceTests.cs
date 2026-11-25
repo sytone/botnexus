@@ -61,6 +61,105 @@ public sealed class SqliteSessionStorePostRunFenceTests : IDisposable
         return (store, session, fence);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompactionSave_PersistsConditionalMetadataWithHistory(bool newerMeasurement)
+    {
+        var (store, session, fence) = await ArrangeSavedSessionAsync(
+            "s-compaction", "agent-a", ConversationId.Create());
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        var changes = new CompactionMetadataChange[]
+        {
+            new("lastProviderPromptTokens", true, previous, null),
+            new("ineffectiveByteCompactionSignature", false, null, "signature")
+        };
+        if (newerMeasurement)
+            session.Metadata["lastProviderPromptTokens"] = 2000;
+        session.ReplaceHistory([new SessionEntry
+        {
+            Role = MessageRole.System, Content = "summary", IsCompactionSummary = true
+        }]);
+
+        (await store.SaveCompactionAsync(session, fence, changes)).ShouldBe(SessionSaveOutcome.Persisted);
+
+        var cold = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        cold.GetHistorySnapshot().ShouldContain(entry => entry.IsCompactionSummary);
+        cold.Metadata["ineffectiveByteCompactionSignature"].ShouldNotBeNull().ToString().ShouldBe("signature");
+        if (newerMeasurement)
+        {
+            session.Metadata["lastProviderPromptTokens"].ShouldBe(2000);
+            cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("2000");
+        }
+        else
+        {
+            session.Metadata.ShouldNotContainKey("lastProviderPromptTokens");
+            cold.Metadata.ShouldNotContainKey("lastProviderPromptTokens");
+        }
+    }
+
+    [Fact]
+    public async Task CompactionSave_DeletedSession_DoesNotChangeLiveMetadata()
+    {
+        var (store, session, fence) = await ArrangeSavedSessionAsync(
+            "s-compaction-rebound", "agent-a", ConversationId.Create());
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        await store.DeleteAsync(session.SessionId);
+
+        var result = await store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null)]);
+
+        result.ShouldBe(SessionSaveOutcome.Rebound);
+        session.Metadata["lastProviderPromptTokens"].ShouldBeSameAs(previous);
+        (await CreateStore().GetAsync(session.SessionId)).ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task CompactionSave_ProviderMeasurementDuringHistoryWrite_IsPersisted()
+    {
+        var (store, session, fence) = await ArrangeSavedSessionAsync(
+            "s-compaction-measurement", "agent-a", ConversationId.Create());
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+        store.BeforeHistoryCommitAsync = (_, _) =>
+        {
+            session.Metadata["lastProviderPromptTokens"] = 2000;
+            return Task.CompletedTask;
+        };
+
+        (await store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null)]))
+            .ShouldBe(SessionSaveOutcome.Persisted);
+
+        session.Metadata["lastProviderPromptTokens"].ShouldBe(2000);
+        var cold = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("2000");
+    }
+
+    [Fact]
+    public async Task CompactionSave_FailedHistoryWrite_DoesNotPublishMetadataOrHistory()
+    {
+        var (store, session, fence) = await ArrangeSavedSessionAsync(
+            "s-compaction-failure", "agent-a", ConversationId.Create());
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        await store.SaveAsync(session);
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+        store.BeforeHistoryCommitAsync = (_, _) => throw new InvalidOperationException("simulated write failure");
+
+        await Should.ThrowAsync<InvalidOperationException>(() => store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null)]));
+
+        session.Metadata["lastProviderPromptTokens"].ShouldBeSameAs(previous);
+        var cold = (await CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("1000");
+        cold.GetHistorySnapshot().ShouldContain(entry => entry.Content == "first");
+        cold.GetHistorySnapshot().ShouldNotContain(entry => entry.IsCompactionSummary);
+    }
+
     [Fact]
     public async Task FencedSave_AfterDeleteMidRun_DoesNotResurrectRow()
     {

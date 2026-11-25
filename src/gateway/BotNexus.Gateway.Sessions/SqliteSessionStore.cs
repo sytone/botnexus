@@ -439,10 +439,28 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     /// delete/reset mutated. When the fence fails the cache entry for the (now rebound) session is
     /// evicted so a subsequent read does not serve the stale, resurrected view.
     /// </remarks>
-    public override async Task<SessionSaveOutcome> SaveAsync(
+    public override Task<SessionSaveOutcome> SaveAsync(
         GatewaySession session,
         SessionWriteFence fence,
         CancellationToken cancellationToken = default)
+        => SaveFencedAsync(session, fence, null, cancellationToken);
+
+    /// <inheritdoc />
+    public override Task<SessionSaveOutcome> SaveCompactionAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        IReadOnlyList<CompactionMetadataChange> metadataChanges,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(metadataChanges);
+        return SaveFencedAsync(session, fence, metadataChanges, cancellationToken);
+    }
+
+    private async Task<SessionSaveOutcome> SaveFencedAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        IReadOnlyList<CompactionMetadataChange>? metadataChanges,
+        CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(session);
         using var activity = ActivitySource.StartActivity("session.save.fenced", ActivityKind.Internal);
@@ -486,7 +504,6 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                 if (BeforeHistoryWriteAsync is { } beforeHistoryWrite)
                     await beforeHistoryWrite(history, cancellationToken).ConfigureAwait(false);
 
-                await UpsertSessionAsync(connection, session, cancellationToken, transaction).ConfigureAwait(false);
                 var persistence = await PersistHistoryAsync(
                     connection,
                     session.SessionId,
@@ -494,7 +511,16 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
                     cancellationToken,
                     transaction,
                     BeforeHistoryCommitAsync).ConfigureAwait(false);
+                Dictionary<string, object?>? stagedMetadata = null;
+                if (metadataChanges is not null)
+                {
+                    stagedMetadata = new Dictionary<string, object?>(session.Metadata);
+                    SessionCompactionExtensions.ApplyCompactionMetadata(stagedMetadata, metadataChanges);
+                }
+                await UpsertSessionAsync(connection, session, cancellationToken, transaction, stagedMetadata).ConfigureAwait(false);
                 await transaction.CommitAsync(cancellationToken).ConfigureAwait(false);
+                if (metadataChanges is not null)
+                    SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, metadataChanges);
                 session.AcknowledgeHistoryPersistence(history, persistence.InsertedRowIds);
                 RecordHistoryMutation(activity, history, persistence);
                 return SessionSaveOutcome.Persisted;
@@ -2522,7 +2548,8 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         SqliteConnection connection,
         GatewaySession session,
         CancellationToken cancellationToken,
-        SqliteTransaction? transaction = null)
+        SqliteTransaction? transaction = null,
+        IReadOnlyDictionary<string, object?>? metadataOverride = null)
     {
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
@@ -2552,7 +2579,7 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
         // new rows. The column is retained for one phase as a rollback source.
         command.Parameters.AddWithValue("$participantsJson", "[]");
         command.Parameters.AddWithValue("$status", session.Status.ToString());
-        command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(session.Metadata, JsonOptions));
+        command.Parameters.AddWithValue("$metadata", JsonSerializer.Serialize(metadataOverride ?? session.Metadata, JsonOptions));
         command.Parameters.AddWithValue("$createdAt", session.CreatedAt.ToString("O"));
         command.Parameters.AddWithValue("$updatedAt", session.UpdatedAt.ToString("O"));
         command.Parameters.AddWithValue("$expiresAt", (object?)session.ExpiresAt?.ToString("O") ?? DBNull.Value);

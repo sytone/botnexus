@@ -18,6 +18,14 @@ public interface ISessionCompactionDiagnostics
 /// </summary>
 public sealed record CompactionPolicyDiagnostics
 {
+    /// <summary>Selected policy authority; configured is the default, inheritance is explicit.</summary>
+    public CompactionPolicySource PolicySource { get; init; }
+    /// <summary>Operator window before resolving the model's real safety limit.</summary>
+    public int ConfiguredContextWindowTokens { get; init; }
+    /// <summary>Configured maximum verbatim tail; the adaptive cut may retain less.</summary>
+    public int PreservedTailTokens { get; init; }
+    /// <summary>Desired local history estimate, calibrated to provider pressure when available; mandatory context may exceed it.</summary>
+    public int PostCompactionTargetTokens { get; init; }
     /// <summary>Current scoped working window; null when the resolver cannot establish one.</summary>
     public int? ScopedContextWindowTokens { get; init; }
     /// <summary>Runtime policy window, including the configured fallback when scope is unknown.</summary>
@@ -28,7 +36,7 @@ public sealed record CompactionPolicyDiagnostics
     public int RatioSafetyThresholdTokens { get; init; }
     /// <summary>Scoped positive ceiling, or null when no ceiling applies.</summary>
     public int? CompactionTokenCeiling { get; init; }
-    /// <summary>Conversation, agent or world; null when no scoped ceiling applies.</summary>
+    /// <summary>Configured, conversation, agent or world; null when no ceiling applies.</summary>
     public string? CompactionTokenCeilingSource { get; init; }
     /// <summary>Shared runtime threshold after capping the ratio threshold by the ceiling.</summary>
     public int EffectiveThresholdTokens { get; init; }

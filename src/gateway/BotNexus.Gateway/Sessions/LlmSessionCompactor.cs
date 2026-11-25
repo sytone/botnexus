@@ -115,7 +115,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// SUCCESSFUL compaction failed to shrink below <see cref="CompactionOptions.LargestEntryBytesThreshold"/>.
     ///
     /// The #1599 bloat trigger evaluates the largest LLM-visible entry, but <see cref="SplitHistory"/>
-    /// always preserves the most recent <c>PreservedTurns</c> user turns. When the oversized entry sits
+    /// prefers the most recent <c>PreservedTurns</c> user turns within the token budget. When an oversized entry fits
     /// inside that preserved tail the cut SUCCEEDS - it sheds the older entries, resets the circuit
     /// breaker, and leaves the oversized entry visible and still the maximum. <see cref="ShouldCompact"/>
     /// then returns true again on the next turn for the same reason, forever, with the transcript growing
@@ -207,6 +207,16 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     /// deliberately requested a 1-turn tail keeps it.
     /// </summary>
     internal const int MinScaledPreservedTurns = 2;
+
+    /// <summary>
+    /// Plans in local-estimate units while the trigger may use provider counts. Reuse the
+    /// bounded ratio calibration so one noisy previous request cannot erase the working tail.
+    /// </summary>
+    internal static int ResolvePostCompactionTargetTokens(CompactionOptions options, CompactionTokenMeasurement measurement)
+    {
+        var scale = Math.Clamp(measurement.Ratio ?? 1.0, 1.0, MaxProviderRatioScale);
+        return Math.Max(1, (int)Math.Floor(CompactionThreshold.Resolve(options) / (2 * scale)));
+    }
 
     /// <summary>
     /// #2522 unit normalisation: the compaction trigger fires in one unit (provider prompt tokens,
@@ -384,6 +394,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(session);
+        ArgumentOutOfRangeException.ThrowIfNegativeOrZero(options.PreservedTailTokens);
 
         // Circuit breaker: skip compaction if this session has failed too many times *recently*.
         // The breaker opens after MaxConsecutiveFailures but auto-resets once the cooldown window has
@@ -452,8 +463,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         var visible = history.Where(SessionContextProjector.IsVisibleInLiveContext).ToList();
 
         // #2522: normalise the keep-recent budget into the same units the trigger fired in. When no
-        // provider prompt-token count is reachable this returns options.PreservedTurns unchanged, so
-        // an unmeasurable session plans exactly the cut it planned before this change.
+        // provider prompt-token count is reachable this returns options.PreservedTurns unchanged.
+        // The token retention cap below applies independently to both cases.
+        var hadProviderTokens = session.Metadata.TryGetValue(ProviderPromptTokensMetadataKey, out var providerTokens);
+        var hadByteSignature = session.Metadata.TryGetValue(IneffectiveByteCompactionMetadataKey, out var byteSignature);
         var planMeasurement = MeasureTokens(session.Session, EstimateVisibleTokenCountFromEntries(visible));
         var effectivePreservedTurns = ScalePreservedTurns(options.PreservedTurns, planMeasurement);
         if (effectivePreservedTurns != options.PreservedTurns)
@@ -472,8 +485,44 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 MinScaledPreservedTurns);
         }
 
-        var (toSummarize, toPreserve) = SplitHistory(visible, effectivePreservedTurns);
-        if (toSummarize.Count == 0)
+        var turnSplit = SplitHistory(visible, effectivePreservedTurns);
+        var (toSummarize, toPreserve, mandatoryTokens, exceedsBudget) = BoundPreservedTail(
+            visible, turnSplit.toSummarize.Count, options.PreservedTailTokens, options.PreserveLatestRequest);
+        if (exceedsBudget)
+        {
+            var failures = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                "Compaction aborted for session {SessionId}: {Reason}. Mandatory context estimates {MandatoryTokens} " +
+                "tokens, exceeding the {Budget} preserved-tail budget. History is unchanged. Consecutive failures: {Failures}/{Max}.",
+                session.SessionId, CompactionSkipReason.MandatoryContextExceedsBudget, mandatoryTokens,
+                options.PreservedTailTokens, failures, MaxConsecutiveFailures);
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion, snap.Count, entriesPreserved: visible.Count,
+                tokensBefore: planMeasurement.EstimatedTokens, tokensAfter: planMeasurement.EstimatedTokens,
+                skipReason: CompactionSkipReason.MandatoryContextExceedsBudget);
+        }
+        // Aim halfway below the trigger, charging the summary prefix and reserving a third
+        // for the handoff. This adaptive optional budget must never displace mandatory context.
+        var targetTokens = ResolvePostCompactionTargetTokens(options, planMeasurement);
+        var prefixTokens = EstimateVisibleTokenCountFromEntries(
+            [new SessionEntry { Role = MessageRole.System, Content = SummaryPrefix + "\n" }]);
+        var tailBudget = Math.Min(options.PreservedTailTokens,
+            Math.Max(mandatoryTokens, Math.Max(1, (targetTokens - prefixTokens) * 2 / 3)));
+        (toSummarize, toPreserve, _, _) = BoundPreservedTail(
+            visible, turnSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
+
+        int SummaryCharBudget(IReadOnlyList<SessionEntry> preserved)
+        {
+            var remaining = targetTokens - prefixTokens - EstimateVisibleTokenCountFromEntries(preserved);
+            return remaining > 0 ? Math.Min(options.MaxSummaryChars, remaining) : options.MaxSummaryChars;
+        }
+
+        bool CanSummarize(IReadOnlyList<SessionEntry> entries, IReadOnlyList<SessionEntry> preserved)
+            => entries.Count > 0 && (!options.PreserveLatestRequest
+                || entries.Any(entry => !entry.IsCompactionSummary)
+                || (ExtractPriorSummary(entries)?.Length ?? 0) > SummaryCharBudget(preserved));
+
+        if (!CanSummarize(toSummarize, toPreserve))
         {
             var visibleTokens = EstimateVisibleTokenCountFromEntries(history);
 
@@ -491,15 +540,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             // skip here and re-trigger on the next turn forever - reintroducing the exact cascade
             // #1574 exists to prevent. Sharing EvaluateTokenTriggers makes that divergence
             // unrepresentable.
-            // #3707: the loop below must be allowed to reach 0. A session whose visible history
-            // contains exactly ONE user entry (at index 0) yields splitIndex = 0 from SplitHistory
-            // for EVERY preservedTurns >= 1, so toSummarize is empty at every value the loop used to
-            // try -- it floored at 1. SplitHistory already handles preservedTurns <= 0 correctly by
-            // returning the whole history as summarizable, so the one input that resolves the
-            // degenerate case was the one value the loop was structurally forbidden from trying.
-            // The token trigger above still gates this: a below-threshold session never gets here,
-            // so summarising everything only happens when the session is genuinely over budget and
-            // has no smaller split available.
+            // A zero-turn fallback may fold completed work within a single user turn, but it
+            // still uses the shared token policy: the active request and unfinished tools survive.
             var fallbackMeasurement = MeasureTokens(session.Session, visibleTokens);
             var (fallbackEstimateTrigger, fallbackProviderTrigger, threshold) =
                 EvaluateTokenTriggers(fallbackMeasurement, options);
@@ -507,8 +549,10 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             {
                 for (var fallbackTurns = effectivePreservedTurns - 1; fallbackTurns >= 0; fallbackTurns--)
                 {
-                    var (fallbackSummarize, fallbackPreserve) = SplitHistory(visible, fallbackTurns);
-                    if (fallbackSummarize.Count > 0)
+                    var fallbackSplit = SplitHistory(visible, fallbackTurns);
+                    var (fallbackSummarize, fallbackPreserve, _, _) = BoundPreservedTail(
+                        visible, fallbackSplit.toSummarize.Count, tailBudget, options.PreserveLatestRequest);
+                    if (CanSummarize(fallbackSummarize, fallbackPreserve))
                     {
                         _logger.LogInformation(
                             "Compaction split found no summarizable turns at PreservedTurns={Requested} for session " +
@@ -522,7 +566,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
                 }
             }
 
-            if (toSummarize.Count == 0)
+            // A tighter live policy may shrink an oversized old summary once. An already-bounded
+            // summary cannot shed an unchanged mandatory tail and must not be rewritten repeatedly.
+            if (!CanSummarize(toSummarize, toPreserve))
             {
                 // #2460 loop guard: this branch previously returned silently, so the coordinator
                 // logged outcome=Aborted with no reason while the transcript kept growing and
@@ -569,9 +615,41 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         }
 
         var tokensBefore = EstimateVisibleTokenCountFromEntries(history);
+        var (estimatePressure, providerPressure, _) = EvaluateTokenTriggers(planMeasurement, options);
+        var requireReduction = options.PreserveLatestRequest && (estimatePressure || providerPressure);
+        CompactionResult SkipWithoutReduction(int proposedTokens, bool summaryAttempted)
+        {
+            var failures = RecordFailure(sessionKey);
+            _logger.LogWarning(
+                "Compaction aborted for session {SessionId}: {Reason}. Estimated context would be {After} " +
+                "rather than less than {Before} tokens; summarization attempted: {SummaryAttempted}. " +
+                "History and provider usage are unchanged. Review mandatory context and fixed prompt overhead; " +
+                "consecutive failures: {Failures}/{Max}.",
+                session.SessionId, CompactionSkipReason.NoContextReduction, proposedTokens, tokensBefore,
+                summaryAttempted, failures, MaxConsecutiveFailures);
+            return CompactionResult.Skipped(
+                snap.DestructiveVersion, snap.Count, entriesPreserved: visible.Count,
+                tokensBefore: tokensBefore, tokensAfter: tokensBefore,
+                skipReason: CompactionSkipReason.NoContextReduction);
+        }
+
+        var minimumTokensAfter = prefixTokens + EstimateVisibleTokenCountFromEntries(toPreserve);
+        if (requireReduction && minimumTokensAfter >= tokensBefore)
+            return SkipWithoutReduction(minimumTokensAfter, summaryAttempted: false);
+
         var priorSummary = ExtractPriorSummary(toSummarize);
-        var summaryPrompt = BuildSummarizationPrompt(toSummarize, options.MaxSummaryChars, priorSummary);
-        var effectiveOptions = ResolveEffectiveOptions(options);
+        var remainingSummaryTokens = targetTokens - minimumTokensAfter;
+        // A character is at most one unit of the script-aware token estimate. When mandatory
+        // context makes the target irreducible, preserve the normal handoff instead of silently
+        // reducing it to a meaningless fragment; the no-rewrite guard bounds repeat attempts.
+        var maxSummaryChars = SummaryCharBudget(toPreserve);
+        if (remainingSummaryTokens <= 0)
+            _logger.LogWarning(
+                "Compaction target {TargetTokens} for session {SessionId} cannot fit mandatory context and the summary prefix; " +
+                "preserving the handoff. Increase the trigger or reduce mandatory context.",
+                targetTokens, session.SessionId);
+        var summaryPrompt = BuildSummarizationPrompt(toSummarize, maxSummaryChars, priorSummary);
+        var effectiveOptions = ResolveEffectiveOptions(options with { MaxSummaryChars = maxSummaryChars });
 
         string summary;
         try
@@ -653,7 +731,7 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // summary is entirely ordinary), and this value is PERSISTED into session history - a lone
         // surrogate that reaches storage is unrepairable because its partner is discarded here.
         // SafeTruncate returns the original reference untouched when no truncation is needed.
-        summary = TextTruncation.SafeTruncate(summary, options.MaxSummaryChars)!;
+        summary = TextTruncation.SafeTruncate(summary, maxSummaryChars)!;
 
         // Redact any secrets that leaked into the LLM summary before persisting.
         if (_redactor is not null)
@@ -664,6 +742,8 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // insert-at-index walk (the #532 drop-entries bug class) is independently testable.
         var newHistory = BuildCompactedHistory(history, toSummarize, summary);
         var tokensAfter = EstimateVisibleTokenCountFromEntries(newHistory);
+        if (requireReduction && tokensAfter >= tokensBefore)
+            return SkipWithoutReduction(tokensAfter, summaryAttempted: true);
 
         _logger.LogInformation(
             "Compacted session {SessionId}: {Summarized} entries marked historical, {Preserved} preserved, " +
@@ -678,49 +758,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         // Reset circuit breaker on success.
         _breaker.TryRemove(sessionKey, out _);
 
-        // #3592: the provider prompt-token count describes the LAST COMPLETED PROVIDER REQUEST, not
-        // the current context. This cut has just shed context, so from here until the next completed
-        // provider turn the stored number describes a transcript that no longer exists. Its only
-        // writer (ProviderTokenUsageRecorder.Record) refuses to store a non-positive value, so no
-        // code path can reset it through the producer - leaving it in place kept `providerTrigger`
-        // true on the stale measurement, re-engaging the #1574 `toSummarize.Count == 0` fallback and
-        // walking PreservedTurns down to 1 trying to shed context that is already shed.
-        //
-        // Clear ONLY here, at the successful commit point. Skipped/Failed outcomes leave history
-        // unchanged, so their measurement is still accurate and must survive. Absence is already the
-        // well-defined "unavailable" state on the read side (ReadProviderPromptTokens returns null,
-        // MeasureTokens renders `providerPromptTokens=unavailable`), so the session degrades to
-        // estimate-only triggering for exactly one turn - never to a zero masquerading as a
-        // measurement. Remove is a no-op when the key was never present.
-        session.Metadata.Remove(ProviderPromptTokensMetadataKey);
-
-        // #3681: record whether this SUCCESSFUL cut actually moved the byte signal. The #1599 bloat
-        // trigger evaluates the largest LLM-visible entry, but SplitHistory always preserves the most
-        // recent PreservedTurns user turns - so an oversized entry inside that tail survives the cut and
-        // remains the maximum. That makes ShouldCompact return true again next turn for the same reason,
-        // with the transcript growing each cycle, and because the cut SUCCEEDED neither the circuit
-        // breaker (cleared just above) nor the #2460 no-split guard can bound it.
-        //
-        // Record the fingerprint of the still-oversized visible population so the byte signal alone is
-        // suppressed for exactly that unchanged population; clear it when the cut did work, so the
-        // suppression can never outlive the condition that justified it.
+        // Stage trigger changes until the history snapshot actually applies. A newer metadata
+        // value must survive even when it happens to contain the same token count.
         var residualSignature = BuildOversizedSignature(newHistory, options.LargestEntryBytesThreshold);
-        if (residualSignature is not null)
-        {
-            session.Metadata[IneffectiveByteCompactionMetadataKey] = residualSignature;
-            _logger.LogInformation(
-                "Compaction of session {SessionId} succeeded but did not reduce the largest visible entry " +
-                "below the {ByteThreshold}-byte threshold (the oversized entry is inside the preserved " +
-                "tail). Suppressing the byte trigger for this unchanged entry; token and provider-token " +
-                "pressure remain active.",
-                session.SessionId,
-                options.LargestEntryBytesThreshold);
-        }
-        else
-        {
-            session.Metadata.Remove(IneffectiveByteCompactionMetadataKey);
-        }
-
         return CompactionResult.ForSuccess(
             summary,
             newHistory,
@@ -729,15 +769,22 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             tokensBefore: tokensBefore,
             tokensAfter: tokensAfter,
             snapshotDestructiveVersion: snap.DestructiveVersion,
-            snapshotHistoryCount: snap.Count);
+            snapshotHistoryCount: snap.Count) with
+        {
+            MetadataChanges =
+            [
+                new(ProviderPromptTokensMetadataKey, hadProviderTokens, providerTokens, null),
+                new(IneffectiveByteCompactionMetadataKey, hadByteSignature, byteSignature, residualSignature)
+            ]
+        };
     }
 
     /// <summary>
     /// Rebuilds session history after a successful summarization: walks the ORIGINAL history,
     /// marks every entry in <paramref name="toSummarize"/> as <c>IsHistory = true</c> (folded), passes
     /// all other entries (pre-existing historical entries, crash sentinels, the preserved tail)
-    /// through verbatim, and inserts the new summary entry at the index immediately AFTER the last
-    /// summarised entry so chronological order is preserved for transcript readers. Extracted from
+    /// through verbatim, and inserts the summary before retained context (normally after the folded
+    /// prefix). Original entries keep their order even when the active request precedes folded tools. Extracted from
     /// <see cref="CompactAsync"/> (#1564) because the <c>summaryInserted</c>/<c>summarizedSeen</c>
     /// bookkeeping is the part most likely to silently drop entries (the #532 bug class) and
     /// deserves direct unit coverage.
@@ -762,6 +809,14 @@ public sealed class LlmSessionCompactor : ISessionCompactor
         for (var i = 0; i < history.Count; i++)
         {
             var entry = history[i];
+            // A token-bounded cut can fold tools AFTER the still-active user request.
+            // Put the handoff before that request so SummaryPrefix's latest-user rule holds.
+            if (!summaryInserted && !toSummarizeSet.Contains(entry) &&
+                SessionContextProjector.IsVisibleInLiveContext(entry))
+            {
+                newHistory.Add(compactionEntry);
+                summaryInserted = true;
+            }
             if (toSummarizeSet.Contains(entry))
             {
                 newHistory.Add(entry with { IsHistory = true });
@@ -798,6 +853,69 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             _ => new BreakerState(1, DateTimeOffset.UtcNow),
             (_, existing) => existing with { Count = existing.Count + 1, LastFailureUtc = DateTimeOffset.UtcNow });
         return updated.Count;
+    }
+
+    private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve, int mandatoryTokens, bool exceedsBudget)
+        BoundPreservedTail(IReadOnlyList<SessionEntry> history, int preferredCut, int budgetTokens, bool preserveLatestRequest)
+    {
+        var latestUser = -1;
+        for (var i = 0; i < history.Count; i++)
+        {
+            var entry = history[i];
+            if (preserveLatestRequest && entry.Role.Equals(MessageRole.User))
+                latestUser = i;
+        }
+
+        // A cut inside an overlapping/parallel call interval would orphan a result. An
+        // unfinished call also pins everything after its start, including approval boundaries.
+        var boundaryDeltas = new int[history.Count + 1];
+        var mandatoryStart = history.Count;
+        foreach (var group in SessionContextProjector.GetToolCallSpans(history))
+        {
+            var first = group.StartIndex ?? group.ResultIndex.GetValueOrDefault();
+            var pending = group.ResultIndex is null;
+            var end = group.ResultIndex ?? history.Count - 1;
+            boundaryDeltas[first + 1]++;
+            boundaryDeltas[end + 1]--;
+            if (pending)
+                mandatoryStart = Math.Min(mandatoryStart, first);
+        }
+        var blockedBoundaries = new bool[history.Count + 1];
+        var openGroups = 0;
+        for (var i = 0; i <= history.Count; i++)
+        {
+            openGroups += boundaryDeltas[i];
+            blockedBoundaries[i] = openGroups > 0;
+        }
+        while (mandatoryStart > 0 && blockedBoundaries[mandatoryStart])
+            mandatoryStart--;
+
+        var suffixUnits = new long[history.Count + 1];
+        for (var i = history.Count - 1; i >= 0; i--)
+        {
+            suffixUnits[i] = suffixUnits[i + 1] +
+                (i == latestUser || history[i].IsCompactionSummary ? 0 : SessionContextProjector.GetLiveContextTokenUnits(history[i]));
+        }
+        var requestUnits = latestUser < 0 ? 0 : SessionContextProjector.GetLiveContextTokenUnits(history[latestUser]);
+        var mandatoryUnits = requestUnits + suffixUnits[mandatoryStart];
+        var budgetUnits = (long)budgetTokens * TokenEstimator.CharsPerToken;
+        if (mandatoryUnits > budgetUnits)
+            return ([], history.ToList(), TokenEstimator.TokensFromUnits(mandatoryUnits + TokenEstimator.CharsPerToken - 1), true);
+
+        var cut = Math.Min(preferredCut, mandatoryStart);
+        while (cut < mandatoryStart && (blockedBoundaries[cut] || requestUnits + suffixUnits[cut] > budgetUnits))
+            cut++;
+
+        var toSummarize = new List<SessionEntry>();
+        var toPreserve = new List<SessionEntry>();
+        for (var i = 0; i < history.Count; i++)
+        {
+            if (!history[i].IsCompactionSummary && (i == latestUser || i >= cut))
+                toPreserve.Add(history[i]);
+            else
+                toSummarize.Add(history[i]);
+        }
+        return (toSummarize, toPreserve, TokenEstimator.TokensFromUnits(mandatoryUnits + TokenEstimator.CharsPerToken - 1), false);
     }
 
     private static (List<SessionEntry> toSummarize, List<SessionEntry> toPreserve) SplitHistory(
@@ -978,6 +1096,16 @@ public sealed class LlmSessionCompactor : ISessionCompactor
     internal static string TruncateForSummarization(SessionEntry entry)
     {
         var content = entry.Content ?? string.Empty;
+        if (entry.Role.Equals(MessageRole.Tool) &&
+            (entry.ToolName is not null || entry.ToolCallId is not null || entry.ToolArgs is not null))
+        {
+            // Tool-start content is often empty. Reserve bounded space for its real evidence
+            // references as well as result text, rather than asking the summarizer to invent them.
+            return $"tool={TextTruncation.SafeTruncate(entry.ToolName, 50)} " +
+                $"call={TextTruncation.SafeTruncate(entry.ToolCallId, 50)} " +
+                $"args={TextTruncation.SafeTruncate(entry.ToolArgs, 200, "... [truncated]")}\n" +
+                TextTruncation.SafeTruncate(content, 140, "... [truncated]");
+        }
         if (content.Length <= MaxEntryContentCharsInPrompt)
             return content;
 
@@ -1109,7 +1237,9 @@ public sealed class LlmSessionCompactor : ISessionCompactor
             var generationOptions = new GenerationOptions
             {
                 CancellationToken = attemptToken,
-                SessionId = sessionId?.Value
+                SessionId = sessionId?.Value,
+                MaxTokens = Math.Max(1, Math.Min(options.MaxSummaryChars,
+                    model.MaxTokens > 0 ? model.MaxTokens : options.MaxSummaryChars))
             };
             var baseExecutionOptions = new ProviderExecutionOptions
             {

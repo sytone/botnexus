@@ -4,6 +4,17 @@
 
 **All compiler warnings must be fixed before tasks are complete.** Warnings will be treated as errors via `TreatWarningsAsErrors=true` in `Directory.Build.props`. Do not ignore, suppress, or work around warnings — fix the underlying issue (nullable checks, async/await, unused code, etc.).
 
+## Cloud Session Validation
+
+In cloud-hosted or remote coding-agent sessions, **PR GitHub Actions replace Azure
+Container Apps, remote/container test scripts and workstation pre-push validation**.
+Push the committed feature branch and open or update its PR to trigger CI; missing host
+Azure tooling or credentials is not a blocker. Keep validation pending until the current
+candidate's required checks pass, inspect failures and record run links and numeric results.
+Do not run local tests on the shared host or claim readiness from a local build.
+Follow the authoritative [cloud-session validation rules](../AGENTS.md#cloud-session-validation);
+configured developer workstations retain their existing gate.
+
 ## Git Workflow
 
 - **All file modifications and commits must happen in a dedicated worktree, never directly on `main`.** Create a worktree for every task. Keep the local `main` branch clean and always aligned to `origin/main`.

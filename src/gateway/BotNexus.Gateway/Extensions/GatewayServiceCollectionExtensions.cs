@@ -92,7 +92,8 @@ public static class GatewayServiceCollectionExtensions
         services.AddOptions<DelayToolOptions>();
         services.AddOptions<AgentSummaryOptions>();
         services.AddOptions<FileWatcherToolOptions>();
-        services.AddOptions<CompactionOptions>();
+        services.AddOptions<CompactionOptions>()
+            .ValidateDataAnnotations();
         services.AddOptions<SqliteWalCheckpointOptions>();
         services.AddOptions<LivenessWatchdogOptions>();
         services.AddOptions<SessionConsistencyOptions>();
@@ -128,25 +129,7 @@ public static class GatewayServiceCollectionExtensions
             services.Configure<TranscriptExportOptions>(config.GetSection("gateway:" + TranscriptExportOptions.SectionName));
             services.Configure<MemoryEmbeddingsConfig>(config.GetSection("gateway:memoryEmbeddings"));
 
-            var compactionSection = config.GetSection("gateway:compaction");
-            if (compactionSection.Exists())
-            {
-                var configuredCompaction = new CompactionOptions
-                {
-                    PreservedTurns = ParseInt(compactionSection["preservedTurns"], new CompactionOptions().PreservedTurns),
-                    MaxSummaryChars = ParseInt(compactionSection["maxSummaryChars"], new CompactionOptions().MaxSummaryChars),
-                    TokenThresholdRatio = ParseDouble(compactionSection["tokenThresholdRatio"], new CompactionOptions().TokenThresholdRatio),
-                    ContextWindowTokens = ParseInt(compactionSection["contextWindowTokens"], new CompactionOptions().ContextWindowTokens),
-                    LargestEntryBytesThreshold = ParseInt(compactionSection["largestEntryBytesThreshold"], new CompactionOptions().LargestEntryBytesThreshold),
-                    SummarizationModel = ParseString(compactionSection["summarizationModel"], new CompactionOptions().SummarizationModel),
-                    SummarizationProvider = ParseString(compactionSection["summarizationProvider"], new CompactionOptions().SummarizationProvider),
-                    CircuitBreakerCooldownSeconds = ParseInt(compactionSection["circuitBreakerCooldownSeconds"], new CompactionOptions().CircuitBreakerCooldownSeconds),
-                    CronLlmIdleTimeoutMs = ParseInt(compactionSection["cronLlmIdleTimeoutMs"], new CompactionOptions().CronLlmIdleTimeoutMs)
-                };
-                services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(configuredCompaction));
-                services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(
-                    _ => new StaticOptionsMonitor<CompactionOptions>(configuredCompaction)));
-            }
+            services.Configure<CompactionOptions>(config.GetSection("gateway:compaction"));
         }
 
         services.TryAddSingleton<SearchAggregator>();
@@ -643,12 +626,10 @@ public static class GatewayServiceCollectionExtensions
         {
             services.PostConfigure<GatewayOptions>(options => options.DefaultAgentId = defaultAgentId);
         }
-        if (config.Gateway?.Compaction is { } compaction)
-        {
-            services.AddSingleton<IOptions<CompactionOptions>>(_ => Options.Create(compaction));
-            services.Replace(ServiceDescriptor.Singleton<IOptionsMonitor<CompactionOptions>>(
-                _ => new StaticOptionsMonitor<CompactionOptions>(compaction)));
-        }
+        // The canonical provider owns both updates and removals. Do not layer a stale
+        // registration snapshot underneath it or freeze these options in a static monitor.
+        services.RemoveAll<IConfigureOptions<CompactionOptions>>();
+        services.Configure<CompactionOptions>(configuration.GetSection("gateway:compaction"));
 
         ConfigureSessionStore(services, config, configDirectory);
         ConfigureConversationStore(services, config, configDirectory);
@@ -855,14 +836,6 @@ public static class GatewayServiceCollectionExtensions
 
     private static int ParseInt(string? value, int defaultValue)
         => int.TryParse(value, out var parsed) ? parsed : defaultValue;
-
-    private static double ParseDouble(string? value, double defaultValue)
-        => double.TryParse(value, NumberStyles.Float | NumberStyles.AllowThousands, CultureInfo.InvariantCulture, out var parsed)
-            ? parsed
-            : defaultValue;
-
-    private static string? ParseString(string? value, string? defaultValue)
-        => string.IsNullOrWhiteSpace(value) ? defaultValue : value;
 
     private sealed class StaticOptionsMonitor<TOptions>(TOptions currentValue) : IOptionsMonitor<TOptions>
     {

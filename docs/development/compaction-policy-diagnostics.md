@@ -1,6 +1,8 @@
 # Compaction policy diagnostics
 
-For developers integrating session diagnostics. These are the backend and `/context` command diagnostics slices of #4888; they do not add a settings UI or change compaction policy.
+For developers integrating session diagnostics. The backend and `/context` diagnostics expose
+the effective [compaction policy](../configuration.md#session-compaction), including explicit
+user-first policy selection. They do not add a dedicated conversation settings UI.
 
 ## Read the current policy
 
@@ -10,12 +12,16 @@ Each HTTP read resolves policy afresh through `ISessionCompactionDiagnostics`. T
 
 | Field under `compactionPolicy` | Meaning |
 | --- | --- |
-| `scopedContextWindowTokens` | Current working window returned by the context-window resolver. Null when scope cannot establish one. |
+| `policySource` | `Configured` (default), `Conversation` or `Model`; inheritance is explicit. |
+| `configuredContextWindowTokens` | Operator window before resolving the model's real capacity; not a new capacity declaration. |
+| `preservedTailTokens` | Configured maximum retained verbatim estimate; adaptive cuts can retain less. |
+| `postCompactionTargetTokens` | Desired local history estimate: half the trigger, reduced by bounded provider/estimate calibration when available. Mandatory context may make it irreducible. |
+| `scopedContextWindowTokens` | Policy-resolved model capacity, or inherited working window in `Conversation` mode. Null when scope cannot establish one. |
 | `contextWindowTokens` | Window used by runtime compaction policy. When scope is unknown, this is the configured compaction fallback, not a newly invented capacity. |
 | `tokenThresholdRatio` | Current configured fraction for the ratio safety threshold. |
-| `ratioSafetyThresholdTokens` | Ratio-only threshold from the shared policy, without the ceiling cap. |
+| `ratioSafetyThresholdTokens` | Model/resolved-window ratio threshold without a configured policy-window or ceiling cap. |
 | `compactionTokenCeiling` | Resolved positive ceiling, or null if none applies. This is not model capacity. |
-| `compactionTokenCeilingSource` | `conversation`, `agent` or `world`; null if no scoped ceiling applies. |
+| `compactionTokenCeilingSource` | `configured`, `conversation`, `agent` or `world`; null if none applies. |
 | `effectiveThresholdTokens` | Shared runtime threshold after the ceiling cap. Token pressure triggers above this value, not at equality. |
 | `localEstimatedTokens` | Existing compactor estimate over persisted LLM-visible history. Excludes system prompt, tool definitions and injected workspace context. |
 | `providerPromptTokens` | Real count from the last completed provider request, or null when unavailable, malformed or cleared. It is not a measurement of a new request. |
@@ -33,6 +39,8 @@ A configured fallback policy window is distinct from known model capacity. Clien
 - The new object contains scalar policy/count fields only: no prompt text, configuration object, metadata bag or credentials.
 - Token diagnostics do not claim to report the separate oversized-entry byte trigger, compaction circuit-breaker state or whether compaction will succeed.
 - The provider measurement is cleared by existing successful-compaction behavior; unknown measurements remain null, never zero placeholders.
+- `NoContextReduction` preserves history and provider measurement when an automatic token-pressure cut would not lower the local estimate.
+- Exhaustion notices resolve the execution working window separately; changing compaction policy cannot hide a smaller conversation window.
 
 ## `/context` command
 

@@ -135,6 +135,76 @@ public sealed class AbandonedTurnDetectionTests
     }
 
     [Fact]
+    public void AmbiguousOverlappingStarts_CannotBeRecoveredByDiscardingOneStart()
+    {
+        var history = new List<SessionEntry>
+        {
+            User("request"), ToolStart(), ToolStart(), ToolEnd(), User("continue")
+        };
+
+        Should.Throw<InvalidOperationException>(() => SessionContextProjector.DetectAbandonedTurn(history))
+            .Message.ShouldContain("ambiguous");
+        history.Where(entry => entry.IsToolStartRow()).ShouldAllBe(entry => !entry.IsHistory);
+    }
+
+    [Fact]
+    public void SameCallIdentityInDifferentExecutions_DoesNotMakeTheEvidenceAmbiguous()
+    {
+        var firstRun = AgentRunId.From("first-run");
+        var secondRun = AgentRunId.From("second-run");
+        var history = new List<SessionEntry>
+        {
+            User("request"),
+            ToolStart() with { AgentRunId = firstRun },
+            ToolStart() with { AgentRunId = secondRun },
+            ToolEnd() with { AgentRunId = firstRun },
+            ToolEnd() with { AgentRunId = secondRun },
+            User("continue")
+        };
+
+        SessionContextProjector.DetectAbandonedTurn(history).HasAbandonedTurn.ShouldBeFalse();
+        SessionContextProjector.GetToolCallSpans(history)
+            .ShouldBe(new (int? StartIndex, int? ResultIndex, bool Ambiguous)[] { (1, 3, false), (2, 4, false) });
+    }
+
+    [Fact]
+    public void OlderDanglingToolCall_RemainsRecoverableAfterAdditionalTurns()
+    {
+        var history = new List<SessionEntry>
+        {
+            User("original request"),
+            ToolStart(),
+            User("first resumed request"),
+            Assistant(),
+            User("continue"),
+        };
+
+        var result = SessionContextProjector.DetectAbandonedTurn(history);
+
+        result.HasAbandonedTurn.ShouldBeTrue();
+        result.AbandonedEntryCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public void CurrentTurnPendingToolCall_IsNotAbandoned()
+    {
+        var history = new List<SessionEntry> { User("request"), ToolStart() };
+
+        SessionContextProjector.DetectAbandonedTurn(history).HasAbandonedTurn.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void ToolCompletedAfterTheNewUserMessage_IsNotAbandoned()
+    {
+        var history = new List<SessionEntry>
+        {
+            User("request"), ToolStart(), User("continue"), ToolEnd()
+        };
+
+        SessionContextProjector.DetectAbandonedTurn(history).HasAbandonedTurn.ShouldBeFalse();
+    }
+
+    [Fact]
     public void EmptyHistory_NoAbandonedTurn()
     {
         var history = new List<SessionEntry>();

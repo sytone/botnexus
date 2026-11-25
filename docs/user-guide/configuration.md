@@ -130,7 +130,8 @@ botnexus config set gateway.world.id local-gateway
 | `sessionStore.type` | string | _(inferred)_ | Session store backend: `InMemory`, `File`, or `Sqlite`. When unset it resolves to `File` if `sessionsDirectory` is set, otherwise `Sqlite`. `InMemory` loses all data on restart. |
 | `sessionStore.filePath` | string | `null` | Directory for the `File` store. Required when `type` is `File`; a relative path resolves against the writable data directory. |
 | `sessionStore.connectionString` | string | `null` | SQLite connection string (when type=Sqlite). Defaults to `sessions.sqlite` in the writable data directory. |
-| `compaction.preservedTurns` | int | `3` | Most recent user turns preserved verbatim, never summarised |
+| `compaction.preservedTurns` | int | `3` | Preferred recent user turns retained verbatim within the token budget; zero explicitly summarises completed work |
+| `compaction.preservedTailTokens` | int | `12000` | Positive estimated token budget for retained verbatim context, excluding the summary and system/tool overhead |
 | `compaction.tokenThresholdRatio` | double | `0.6` | Fraction of the context window at which the token-count trigger fires |
 | `compaction.contextWindowTokens` | int | `128000` | Fallback context window (tokens) when no scoped window resolves |
 | `auxiliary.titling.enabled` | bool | `true` | Enable conversation auto-titling after the first exchange; false keeps the default title until renamed |
@@ -785,12 +786,36 @@ The gateway warns after prolonged inactivity and verifies the runtime scheduler 
    ```
 
 **Compaction Settings:**
-- `preservedTurns`: Most recent user turns preserved verbatim, never summarised
+No compaction-specific setup is required. The defaults compact automatically, protect your
+current request and bound the retained tool-heavy context; tune these only when needed.
+
+- `policySource`: `Configured` by default; explicitly choose `Conversation` for scoped inheritance or `Model` for model-based policy
+- `compactionTokenCeiling`: Explicit configured trigger in tokens; the actual model's safety limit still applies
+- `preservedTurns`: Preferred recent user turns to keep verbatim within the token budget
+- `preservedTailTokens`: Positive estimated token budget for retained verbatim context (default: 12000)
 - `tokenThresholdRatio`: Fraction of the context window at which compaction triggers
-- `contextWindowTokens`: Fallback context window size in tokens
+- `contextWindowTokens`: Configured working-context policy window; also the fallback when model capacity is unknown
 
 See [Configuration reference](../configuration.md#session-compaction) for the full set, including the
 additive per-entry byte trigger `largestEntryBytesThreshold`.
+
+The latest user request and unfinished tool groups are retained during automatic compaction.
+If these alone exceed the budget, compaction reports `MandatoryContextExceedsBudget` without
+changing history. The budget limits retained working context, not stored transcript size or
+the entire next model request.
+The cut targets roughly half the effective trigger, including estimated summary space, rather
+than retaining the entire allowance after every cut. Mandatory context can make that target
+irreducible. Changes apply on the next policy check without restarting. Use `/context` to see
+the selected source, effective trigger, retained-tail limit and target.
+After repeated failures, retries still wait for the existing circuit-breaker cooldown
+(600 seconds by default); changing settings does not clear that cooldown.
+Lowering the policy can also shorten an oversized existing summary. Automatic token-pressure
+compaction is rejected as `NoContextReduction` if it would not reduce context, preserving history.
+No summarization call is made when the required retained context and prefix already prevent
+any reduction. If provider usage is much higher than the history estimate, review the system
+prompt and tool definitions as well.
+An abandoned tool call from an earlier turn is recovered as an unknown outcome, not kept
+pending forever and not presented as a successful result.
 
 ### Session Cleanup
 

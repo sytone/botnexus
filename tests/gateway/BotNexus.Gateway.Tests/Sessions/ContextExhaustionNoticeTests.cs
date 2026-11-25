@@ -10,6 +10,7 @@ using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Sessions;
 using BotNexus.Gateway.Streaming;
 using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
 using Moq;
 
 namespace BotNexus.Gateway.Tests.Sessions;
@@ -169,15 +170,18 @@ public sealed class ContextExhaustionNoticeTests
     // AC4: the comparison uses the SCOPE-RESOLVED window, not the raw global ContextWindowTokens.
     // -------------------------------------------------------------------------------------------
 
-    [Fact]
-    public async Task ConversationLevelOverride_NarrowsTheWindow_AndTripsExhaustionTheGlobalWouldMiss()
+    [Theory]
+    [InlineData(CompactionPolicySource.Configured)]
+    [InlineData(CompactionPolicySource.Conversation)]
+    [InlineData(CompactionPolicySource.Model)]
+    public async Task ConversationLevelOverride_NarrowsTheWindow_AndTripsExhaustionTheGlobalWouldMiss(CompactionPolicySource source)
     {
         // 40,000 prompt tokens is nowhere near the agent's 200,000-token window, nor the 128,000
         // global default, so without the scoped resolver this run stays silent. The conversation
         // pins the window to 40,000 - which it has exhausted.
         var emitted = new EmittedPayloads();
         var session = CreateSession("session-3535-scoped", promptTokens: 40_000);
-        var notifier = CreateNotifier(conversationOverride: 40_000, agentWindow: 200_000);
+        var notifier = CreateNotifier(conversationOverride: 40_000, agentWindow: 200_000, source);
         var store = new Mock<ISessionStore>();
 
         await StreamingSessionHelper.ProcessAndSaveAsync(
@@ -290,7 +294,8 @@ public sealed class ContextExhaustionNoticeTests
         return session;
     }
 
-    private static ContextExhaustionNotifier CreateNotifier(int? conversationOverride, int? agentWindow)
+    private static ContextExhaustionNotifier CreateNotifier(
+        int? conversationOverride, int? agentWindow, CompactionPolicySource source = CompactionPolicySource.Configured)
     {
         var registry = new Mock<IAgentRegistry>();
         registry.Setup(r => r.Get(It.IsAny<AgentId>())).Returns(new AgentDescriptor
@@ -324,11 +329,13 @@ public sealed class ContextExhaustionNoticeTests
             ContextWindow: 128_000,
             MaxTokens: 4096));
 
+        var options = new Mock<IOptionsMonitor<CompactionOptions>>();
+        options.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions { PolicySource = source });
         var resolver = new SessionContextWindowResolver(
             NullLogger<SessionContextWindowResolver>.Instance,
             registry.Object,
             conversations.Object,
-            new LlmClient(new ApiProviderRegistry(), models));
+            new LlmClient(new ApiProviderRegistry(), models), options.Object);
 
         return new ContextExhaustionNotifier(
             NullLogger<ContextExhaustionNotifier>.Instance,

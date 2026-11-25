@@ -75,13 +75,15 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
         var result = await compactor.CompactAsync(session, LiveLikeOptions());
 
         result.Succeeded.ShouldBeTrue();
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         session.Metadata.ContainsKey(Key).ShouldBeFalse();
     }
 
     [Fact]
     public async Task ShouldCompact_AfterASuccessfulCut_NoLongerFiresOnTheStaleProviderCount()
     {
-        // The defect in miniature. The visible estimate is ~2 tokens either side of the cut, so the
+        // The visible estimate stays far below the 120,000-token threshold either side of the cut, so the
         // ONLY thing that can keep ShouldCompact true afterwards is the stale provider number.
         var session = CreateFourTurnSession();
         session.Metadata[Key] = 999_306;
@@ -93,6 +95,9 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
 
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue();
+        result.TokensAfter.ShouldBeLessThan(result.TokensBefore);
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
 
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
     }
@@ -107,7 +112,10 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
 
         var compactor = CreateCompactor(SummarizingProvider());
 
-        (await compactor.CompactAsync(session, LiveLikeOptions())).Succeeded.ShouldBeTrue();
+        var result = await compactor.CompactAsync(session, LiveLikeOptions());
+        result.Succeeded.ShouldBeTrue();
+        session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
 
         session.Metadata.ContainsKey(Key).ShouldBeFalse();
         session.Metadata["modelOverride"].ShouldBe("some-model");
@@ -229,7 +237,7 @@ public sealed class LlmSessionCompactorProviderTokenStalenessTests
         session.AddEntries(new[]
         {
             new SessionEntry { Role = MessageRole.User, Content = "u1" },
-            new SessionEntry { Role = MessageRole.Assistant, Content = "a1" },
+            new SessionEntry { Role = MessageRole.Assistant, Content = new string('a', 4000) },
             new SessionEntry { Role = MessageRole.User, Content = "u2" },
             new SessionEntry { Role = MessageRole.Assistant, Content = "a2" },
             new SessionEntry { Role = MessageRole.User, Content = "u3" },

@@ -13,6 +13,50 @@ namespace BotNexus.Gateway.Tests.Sessions;
 
 public sealed class ScopedCompactionCeilingTests
 {
+    [Theory]
+    [InlineData(null, 4000, "configured")]
+    [InlineData("Configured", 4000, "configured")]
+    [InlineData("Conversation", 1000, "conversation")]
+    [InlineData("Model", null, null)]
+    public async Task Resolver_ExplicitPolicySource_IsAuthoritative(string? source, int? expected, string? expectedSource)
+    {
+        var agentId = AgentId.From("policy-agent");
+        var registry = new Mock<IAgentRegistry>();
+        registry.Setup(value => value.Get(agentId)).Returns(new AgentDescriptor
+        {
+            AgentId = agentId, DisplayName = "Policy", ModelId = "m", ApiProvider = "p", CompactionTokenCeiling = 2000
+        });
+        var store = new InMemoryConversationStore();
+        var conversation = new Conversation
+        {
+            AgentId = agentId, ConversationId = ConversationId.From("policy-conversation"),
+            WorldId = "policy-world", CompactionTokenCeiling = 1000
+        };
+        await store.CreateAsync(conversation);
+        var policyJson = source is null
+            ? "{\"compactionTokenCeiling\":4000}"
+            : "{\"compactionTokenCeiling\":4000,\"policySource\":\"" + source + "\"}";
+        var compaction = JsonSerializer.Deserialize<BotNexus.Gateway.Abstractions.Sessions.CompactionOptions>(
+            policyJson, new JsonSerializerOptions(JsonSerializerDefaults.Web));
+        var config = new PlatformConfig
+        {
+            Gateway = new GatewaySettingsConfig
+            {
+                World = new BotNexus.Domain.WorldIdentity { Id = "policy-world", Name = "Policy world" },
+                Compaction = compaction
+            },
+            World = new WorldSettingsConfig { CompactionTokenCeiling = 3000 }
+        };
+        var resolver = new SessionCompactionCeilingResolver(
+            NullLogger<SessionCompactionCeilingResolver>.Instance, registry.Object, store,
+            new TestOptionsMonitor<PlatformConfig>(config));
+
+        var resolved = await resolver.ResolveAsync(agentId, conversation.ConversationId);
+
+        resolved.Tokens.ShouldBe(expected);
+        resolved.Source.ShouldBe(expectedSource);
+    }
+
     [Fact]
     public async Task Resolver_PrecedenceResetSiblingAndWorldIsolation()
     {
@@ -25,7 +69,14 @@ public sealed class ScopedCompactionCeilingTests
         var sibling = new Conversation { AgentId = agentId, ConversationId = ConversationId.From("ceiling-sibling"), WorldId = "local-world" };
         await store.CreateAsync(c);
         await store.CreateAsync(sibling);
-        var config = new PlatformConfig { Gateway = new GatewaySettingsConfig { World = new BotNexus.Domain.WorldIdentity { Id = "local-world", Name = "Local" } }, World = new WorldSettingsConfig { CompactionTokenCeiling = 3000 } };
+        var config = new PlatformConfig { Gateway = new GatewaySettingsConfig
+        {
+            World = new BotNexus.Domain.WorldIdentity { Id = "local-world", Name = "Local" },
+            Compaction = new BotNexus.Gateway.Abstractions.Sessions.CompactionOptions
+            {
+                PolicySource = BotNexus.Gateway.Abstractions.Sessions.CompactionPolicySource.Conversation
+            }
+        }, World = new WorldSettingsConfig { CompactionTokenCeiling = 3000 } };
         var monitor = new TestOptionsMonitor<PlatformConfig>(config);
         var resolver = new SessionCompactionCeilingResolver(NullLogger<SessionCompactionCeilingResolver>.Instance, registry.Object, store, monitor);
         var resolved = await resolver.ResolveAsync(agentId, c.ConversationId);

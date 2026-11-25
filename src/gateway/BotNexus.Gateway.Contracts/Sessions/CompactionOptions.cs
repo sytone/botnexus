@@ -2,21 +2,81 @@ using System.ComponentModel.DataAnnotations;
 using BotNexus.Gateway.Abstractions.Models;
 namespace BotNexus.Gateway.Abstractions.Sessions;
 
+/// <summary>Chooses the authority for compaction policy independently of the model's real capacity.</summary>
+[System.Text.Json.Serialization.JsonConverter(typeof(System.Text.Json.Serialization.JsonStringEnumConverter<CompactionPolicySource>))]
+public enum CompactionPolicySource
+{
+    /// <summary>Use the operator's configured policy; conversation overrides cannot replace it.</summary>
+    Configured,
+    /// <summary>Opt into conversation, agent and world inheritance, in that order.</summary>
+    Conversation,
+    /// <summary>Use the active model's ratio threshold without any configured token ceiling.</summary>
+    Model
+}
+
 /// <summary>
 /// Configuration for session compaction behavior.
 /// </summary>
 public sealed record CompactionOptions
 {
-    /// <summary>Number of most recent user turns to preserve verbatim (default: 3).</summary>
+    /// <summary>Policy authority. Explicit operator configuration wins unless inheritance is selected.</summary>
+    [EnumDataType(typeof(CompactionPolicySource))]
+    [Display(Name = "Compaction policy source",
+        Description = "Configured (default): your gateway policy wins; agent/world ceilings supply defaults when no gateway ceiling is set. Conversation: explicitly inherit conversation, agent, then world settings. Model: use the active model's ratio threshold. Model capacity always remains a safety limit.",
+        GroupName = "Compaction", Order = -1)]
+    [ConfigField(Widget = ConfigFieldWidget.Select, Group = "compaction", Order = -1)]
+    public CompactionPolicySource PolicySource { get; init; } = CompactionPolicySource.Configured;
+
+    /// <summary>The configured policy window before runtime model capacity is resolved; never persisted.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public int? ConfiguredWindowTokens { get; private init; }
+
+    internal CompactionOptions WithResolvedWindow(int window) => this with
+    {
+        ContextWindowTokens = window,
+        ConfiguredWindowTokens = ConfiguredWindowTokens ?? ContextWindowTokens
+    };
+
+    /// <summary>
+    /// Runtime-only protection for the active request. Only an explicit manual compaction may
+    /// summarize it; changing a retention preference never changes this operation boundary.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool PreserveLatestRequest { get; private init; } = true;
+
+    /// <summary>
+    /// Creates the policy for an explicit compact-now operation after the current work has stopped.
+    /// This operation state cannot be selected through persisted configuration.
+    /// </summary>
+    public CompactionOptions ForManualCompaction()
+        => this with { PreservedTurns = 0, PreserveLatestRequest = false };
+
+    /// <summary>Preferred recent user turns, subject to the token budget; zero retains only mandatory active context.</summary>
+    [Range(0, int.MaxValue)]
     [Display(
         Name = "Preserved turns",
-        Description = "Number of most recent user turns to preserve verbatim (default: 3).",
+        Description = "Preferred recent user turns within the preserved-tail token budget (default: 3). Zero summarizes completed work but still protects the active request. Use the compact-now action for an explicit manual handoff.",
         GroupName = "Compaction",
         Order = 0)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 0)]
     public int PreservedTurns { get; init; } = 3;
 
+    /// <summary>
+    /// Estimated token budget for verbatim retained entries, excluding the new summary and system
+    /// overhead (default: 12000). The latest request and unfinished tool groups are mandatory;
+    /// compaction fails without modifying history when these alone exceed the positive budget.
+    /// </summary>
+    [Range(1, int.MaxValue)]
+    [Display(
+        Name = "Preserved tail tokens",
+        Description = "Positive estimated token budget for recent verbatim context (default: 12000), excluding the summary and system overhead. Mandatory context exceeding it aborts compaction without changing history.",
+        GroupName = "Compaction",
+        Order = 12)]
+    [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 12)]
+    public int PreservedTailTokens { get; init; } = 12_000;
+
     /// <summary>Maximum characters for the compaction summary (default: 16000).</summary>
+    [Range(1, int.MaxValue)]
     [Display(
         Name = "Max summary chars",
         Description = "Maximum characters for the compaction summary (default: 16000).",
@@ -28,6 +88,7 @@ public sealed record CompactionOptions
     /// <summary>
     /// Token threshold as a fraction of context window (0.0-1.0) at which auto-compaction triggers (default: 0.6).
     /// </summary>
+    [Range(0.0, 1.0)]
     [Display(
         Name = "Token threshold ratio",
         Description = "Token threshold as a fraction of context window (0.0-1.0) at which auto-compaction triggers (default: 0.6).",
@@ -41,10 +102,11 @@ public sealed record CompactionOptions
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 2)]
     public double TokenThresholdRatio { get; init; } = 0.6;
 
-    /// <summary>Approximate context window size in tokens for the model (default: 128000).</summary>
+    /// <summary>Configured working-context policy window and unknown-capacity fallback, not declared model capacity.</summary>
+    [Range(1, int.MaxValue)]
     [Display(
         Name = "Context window tokens",
-        Description = "Approximate context window size in tokens for the model (default: 128000).",
+        Description = "Configured working-context policy window (default: 128000), not a declaration of model capacity. Used with the ratio when Configured is selected and no explicit ceiling applies; also the fallback when model capacity is unknown.",
         GroupName = "Compaction",
         Order = 3)]
     // #3654: numeric, not a credential (see TokenThresholdRatio above). Redacting it was also
@@ -53,15 +115,16 @@ public sealed record CompactionOptions
     public int ContextWindowTokens { get; init; } = 128_000;
 
     /// <summary>
-    /// Resolved positive scoped trigger ceiling, not model capacity. Null retains the ratio-only
-    /// threshold. Runtime callers resolve conversation > agent > world before each check.
+    /// Positive configured trigger, not model capacity. Configured mode gives this value priority;
+    /// Conversation opts into scoped inheritance and Model ignores ceilings.
     /// </summary>
     [Display(
         Name = "Compaction token ceiling",
-        Description = "Positive token-count cap on the ratio-based compaction trigger, not model capacity. Null keeps the ratio-only threshold; runtime checks resolve conversation, then agent, then world overrides.",
+        Description = "Explicit positive compaction trigger in tokens, not model capacity. With Configured (default), this value wins over conversation/agent/world ceilings; null uses agent then world defaults. Conversation opts into scoped inheritance; Model ignores ceilings. The actual model safety threshold still applies.",
         GroupName = "Compaction",
         Order = 11)]
     [ConfigField(Widget = ConfigFieldWidget.Number, Group = "compaction", Order = 11)]
+    [Range(1, int.MaxValue)]
     public int? CompactionTokenCeiling { get; init; }
 
     /// <summary>
@@ -168,16 +231,20 @@ public sealed record CompactionOptions
 /// <summary>Pure token trigger policy shared by estimates, provider usage and cut-plan fallback.</summary>
 public static class CompactionThreshold
 {
-    /// <summary>Returns min(floor(window * ratio), ceiling); null means no ceiling.</summary>
+    /// <summary>Bounds the selected configured/inherited trigger by the resolved model or working-window safety threshold.</summary>
     public static int Resolve(CompactionOptions options)
     {
         ArgumentNullException.ThrowIfNull(options);
         if (options.CompactionTokenCeiling is <= 0)
             throw new InvalidOperationException("Invalid compaction token ceiling; expected a positive integer.");
         var ratioThreshold = (int)Math.Floor(options.ContextWindowTokens * options.TokenThresholdRatio);
-        return options.CompactionTokenCeiling is int ceiling
-            ? Math.Min(ratioThreshold, ceiling)
-            : ratioThreshold;
+        if (options.PolicySource == CompactionPolicySource.Model)
+            return ratioThreshold;
+        var policyThreshold = options.CompactionTokenCeiling ??
+            (options.PolicySource == CompactionPolicySource.Configured && options.ConfiguredWindowTokens is int configured
+                ? (int)Math.Floor(configured * options.TokenThresholdRatio)
+                : ratioThreshold);
+        return Math.Min(ratioThreshold, policyThreshold);
     }
 }
 
