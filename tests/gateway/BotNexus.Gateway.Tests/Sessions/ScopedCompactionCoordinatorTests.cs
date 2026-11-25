@@ -16,6 +16,39 @@ namespace BotNexus.Gateway.Tests.Sessions;
 public sealed class ScopedCompactionCoordinatorTests
 {
     [Theory]
+    [InlineData(SessionSaveOutcome.Rebound)]
+    [InlineData(SessionSaveOutcome.Conflict)]
+    public async Task CompactAsync_RejectedSave_DoesNotChangeTriggerMetadata(SessionSaveOutcome saveOutcome)
+    {
+        var session = NewSession();
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "request" });
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var original = session.Metadata["lastProviderPromptTokens"];
+        var snapshot = session.SnapshotHistoryForCompaction();
+        var result = CompactionResult.ForSuccess("summary", snapshot.Entries, 1, 0, 100, 50,
+            snapshot.DestructiveVersion, snapshot.Count) with
+        {
+            MetadataChanges = [new("lastProviderPromptTokens", true, original, null)]
+        };
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+        var store = new Mock<ISessionStore>();
+        store.Setup(value => value.SaveCompactionAsync(session, It.IsAny<SessionWriteFence>(),
+                It.IsAny<IReadOnlyList<CompactionMetadataChange>>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(saveOutcome);
+        var options = new Mock<IOptionsMonitor<CompactionOptions>>();
+        options.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions());
+        var coordinator = new SessionCompactionCoordinator(compactor.Object, store.Object,
+            Mock.Of<IAgentSupervisor>(), null, null, options.Object, NullLogger<SessionCompactionCoordinator>.Instance);
+
+        var outcome = await coordinator.CompactAsync(session.AgentId, session, CancellationToken.None);
+
+        outcome.Applied.ShouldBeFalse();
+        session.Metadata["lastProviderPromptTokens"].ShouldBeSameAs(original);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
@@ -101,9 +134,11 @@ public sealed class ScopedCompactionCoordinatorTests
         compactor.ShouldCompact(session.Session, global).ShouldBeFalse();
         compactor.ShouldCompact(session.Session, scoped).ShouldBeTrue();
         var baseline = await compactor.CompactAsync(session, global, CancellationToken.None);
-        baseline.SkipReason.ShouldBe(CompactionSkipReason.NoSummarizableTurns);
+        // The independent retained-token budget now bounds even a direct below-trigger cut.
+        // Above, ShouldCompact still pins the different automatic scheduling decisions.
+        baseline.Succeeded.ShouldBeTrue();
         baseline.TokensBefore.ShouldBeInRange(84_000, 86_000);
-        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Never);
+        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Once);
         var monitor = new Mock<IOptionsMonitor<CompactionOptions>>();
         monitor.SetupGet(value => value.CurrentValue).Returns(global);
         var coordinator = CreateCoordinator(compactor, monitor.Object);
@@ -113,11 +148,12 @@ public sealed class ScopedCompactionCoordinatorTests
         outcome.Succeeded.ShouldBeTrue();
         outcome.Applied.ShouldBeTrue();
         outcome.SkipReason.ShouldBeNull();
-        outcome.EntriesSummarized.ShouldBe(21);
-        outcome.EntriesPreserved.ShouldBe(0);
+        outcome.EntriesSummarized.ShouldBe(18);
+        outcome.EntriesPreserved.ShouldBe(3);
+        session.GetHistorySnapshot().ShouldContain(entry => entry.Content == "investigate" && !entry.IsHistory);
         outcome.TokensAfter.ShouldBeLessThan(outcome.TokensBefore);
         session.GetHistorySnapshot().Count(entry => entry.IsCompactionSummary && !entry.IsHistory).ShouldBe(1);
-        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Once);
+        provider.Verify(value => value.StreamSimple(It.IsAny<LlmModel>(), It.IsAny<Context>(), It.IsAny<SimpleStreamOptions?>()), Times.Exactly(2));
     }
 
     private static GatewaySession NewSession() => new()
@@ -130,6 +166,9 @@ public sealed class ScopedCompactionCoordinatorTests
     {
         var store = new Mock<ISessionStore>();
         store.Setup(value => value.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSaveOutcome.Persisted);
+        store.Setup(value => value.SaveCompactionAsync(It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(),
+                It.IsAny<IReadOnlyList<CompactionMetadataChange>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(SessionSaveOutcome.Persisted);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(value => value.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))

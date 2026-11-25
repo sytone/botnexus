@@ -6,7 +6,41 @@ BotNexus runs on **Windows and Linux**. All code, tests, scripts, and documentat
 
 ## Validation
 
-The authoritative repository gate is remote by default (#2158):
+Choose the authoritative validation route by session type. Cloud and remote coding-agent
+sessions use PR GitHub Actions; configured developer workstations use the repository gate.
+
+### Cloud-session validation
+
+**In cloud-hosted or remote coding-agent sessions, the PR's GitHub Actions replace Azure
+Container Apps, remote/container validation scripts and workstation test gates. They are
+the authoritative validation, not an additional requirement.** Missing Azure tooling,
+credentials or runner configuration on the session host is expected and does not block this route.
+
+1. Stage and commit the intended changes on the isolated feature branch and confirm the candidate
+   has no staged, unstaged or untracked source changes. Compile changed projects when the SDK is
+   available; the PR workflow also builds the candidate.
+2. Push the feature branch and open or update its PR to trigger CI. **Cloud sessions may push
+   before validation passes to start or retry PR CI; the workstation pre-push gate does not apply.**
+   Report validation as pending until the checks finish. Do not install Azure tooling, obtain
+   workstation credentials or fall back to local tests merely to bootstrap PR CI.
+3. Use `gh pr checks <number> --watch` and inspect failed job logs and test-result artifacts.
+   For code changes, require `CI: Build & Test`'s `core-tests` job, including its fail-closed
+   test-result contract, and every other applicable required PR check. Documentation-only
+   changes use the documentation checks instead of CORE. Verify the evidence belongs to the
+   current PR head or its GitHub-generated merge candidate, and record run links and numeric results.
+4. Fix failures in another commit, push it and inspect the new checks. A prior revision's success,
+   missing checks, cancelled runs or unexpectedly skipped required checks are not passing evidence.
+   Do not mark the work ready, merge it or claim completion until the current candidate's required
+   checks pass. Never weaken workflows, assertions, coverage thresholds or result contracts.
+
+Shared-host restrictions still apply: do not run local tests or start gateway processes.
+This exception changes where validation runs and permits the push needed to trigger it;
+it does not waive validation or authorize a merge. If PR CI cannot run, report that blocker
+rather than treating a local build as a substitute.
+
+### Configured developer workstations
+
+Outside cloud sessions, the authoritative repository gate is remote by default (#2158):
 
 ```powershell
 scripts/repo/Invoke-PreCommitValidation.ps1
@@ -30,7 +64,7 @@ scripts/repo/Invoke-PreCommitValidation.ps1
 
 `-LocalFallback` remains a backward-compatible alias for local mode. The lower-level scripts remain focused diagnostic tools, not substitutes for the strict gate.
 
-**Stage → commit → validate.** Stage the intended changes, commit them on the isolated development branch, confirm that the candidate has no staged, unstaged or untracked source changes, then run the required validation. A local development commit may be unvalidated; it is not proof of success or permission to push. Fix validation failures in another commit and validate that candidate. Do not amend or add a commit after the qualifying final run without validating the resulting candidate again. The explicit strict gate reuses a successful receipt only when the actual content, HEAD, base, required mode and current validation approval match. Missing, malformed, failed, stale, expired or mismatched evidence fails closed. Keep required validation before every push and readiness claim. See `docs/development/validation-receipts.md`.
+**Workstation sequence: stage → commit → validate → push.** Stage the intended changes, commit them on the isolated development branch, confirm that the candidate has no staged, unstaged or untracked source changes, then run the required validation. A local development commit may be unvalidated; it is not proof of success or permission to push under this workstation route. Fix validation failures in another commit and validate that candidate. Do not amend or add a commit after the qualifying final run without validating the resulting candidate again. The explicit strict gate reuses a successful receipt only when the actual content, HEAD, base, required mode and current validation approval match. Missing, malformed, failed, stale, expired or mismatched evidence fails closed. Keep required workstation validation before every push and readiness claim. See `docs/development/validation-receipts.md`. Cloud sessions instead follow [Cloud-session validation](#cloud-session-validation).
 
 ## Documentation Standards
 
@@ -87,7 +121,9 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    - Implement until the test passes
    - Never write implementation code to make a pre-existing test pass by deleting the test
 
-2. **Run authoritative validation before every push.** This is not optional:
+2. **Use the authoritative validation route for your session.** Cloud sessions follow
+   [Cloud-session validation](#cloud-session-validation): push to trigger PR CI, then require its
+   checks before readiness or completion. On configured workstations, run this before every push:
 
    ```shell
    scripts/repo/Invoke-PreCommitValidation.ps1
@@ -97,13 +133,13 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
 
    The lower-level `test-impacted.ps1 -DryRun` remains useful to preview impacted projects during diagnosis, but it is not an additional pre-push requirement after a qualifying remote receipt.
 
-3. **Zero failures required before push or completion.** Local development commits may contain unvalidated work or an intentionally failing tests-first case. Mark that evidence honestly. If validation fails, fix the problem in another commit and validate again; do not push, publish as ready or mark the task complete until the required checks pass. Never weaken or skip assertions to obtain success.
+3. **Zero failures required before readiness or completion.** Development commits may contain unvalidated work or an intentionally failing tests-first case. Mark that evidence honestly. If validation fails, fix the problem in another commit and validate again. Workstation pushes require the pre-push gate; cloud pushes may start or retry PR CI. Neither route may publish the work as ready or mark the task complete until its required checks pass. Never weaken or skip assertions to obtain success.
 
 4. **Do not skip or disable tests** to make the suite pass. If a test is failing, the production code or the test itself must be fixed — not removed.
 
-5. **Do not use `--no-verify`** for code changes. There is deliberately no pre-commit hook - commit-time local validation is banned, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). `--no-verify` therefore skips that guard, not a test gate. Run `scripts/repo/Invoke-PreCommitValidation.ps1` for the final candidate instead.
+5. **Do not use `--no-verify`** for code changes. There is deliberately no pre-commit hook - commit-time local validation is banned, and `scripts/repo/install-hooks.ps1` activates only the `pre-push` `core.bare` guard (#1602). `--no-verify` therefore skips that guard, not a test gate. Use the session-appropriate authoritative validation route for the final candidate instead.
 
-6. **Local `dotnet build` is permitted and expected; local test execution is not.** Compile the projects you changed before spending a remote gate - `dotnet build` starts no test host and no gateway process, so it cannot leak, and it catches in about a second the compile errors that otherwise cost a full remote run. Never run `dotnet test`, `test-impacted.ps1`, or `Invoke-PreCommitValidation.ps1 -LocalFallback` on a host with a live gateway: a test host boots real gateway processes that survive their parent, claim scheduled jobs from the shared cron store, and starve the live gateway - that is the orphan-process leak #2158 exists to close. All ordinary test execution is remote and authoritative: `scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>`. Browser-emulated E2E is excluded from ordinary validation while #3601 is reviewed; `-Mode full` and `-Mode playwright` are explicit diagnostics, not required gates or passing evidence for the quarantine. If the remote infrastructure is genuinely unavailable, `Invoke-PreCommitValidation.ps1 -ValidationMode local` (or the `-LocalFallback` alias) is the sole supported local gate; state that fallback explicitly whenever you use it.
+6. **Local `dotnet build` is permitted; local test execution is not.** Compile changed projects when the SDK is available before spending a validation run - `dotnet build` starts no test host and no gateway process. Never run `dotnet test`, `test-impacted.ps1`, or `Invoke-PreCommitValidation.ps1 -LocalFallback` on a host with a live gateway: orphan test gateways can claim the live gateway's scheduled jobs (#2158). Cloud sessions run ordinary tests through PR GitHub Actions instead of Azure/container scripts. Configured workstations use `scripts/repo/Invoke-AzureBuildTest.ps1 -Mode core -WorktreePath <worktree>`. Browser-emulated E2E is excluded from ordinary validation while #3601 is reviewed; `-Mode full` and `-Mode playwright` are explicit diagnostics, not required gates or passing evidence for the quarantine. If a workstation's remote infrastructure is genuinely unavailable, `Invoke-PreCommitValidation.ps1 -ValidationMode local` (or the `-LocalFallback` alias) is the sole supported local gate; choose it deliberately, only on a host without a live gateway, and state that fallback explicitly.
 
 7. **Documentation-only changes do not run the test gate.** If a change touches nothing but `*.md`, `docs/**`, or `mkdocs.yml`, the required validation is the documentation build, not the ~12-minute remote test suite:
 
@@ -112,7 +148,7 @@ All planning items (features, bugs, improvements, refactors) are tracked as **Gi
    npm run docs:build
    ```
 
-   This is the same command `deploy-docs.yml` runs, it completes in about 20 seconds, and it is a real gate rather than a renderer - a broken relative link fails it with `[vitepress] N dead link(s) found.` and exit 1. CI agrees: `ci-build-test.yml` lists `docs/**` and `**/*.md` under `paths-ignore`, so a docs-only PR does not trigger the test workflow at all. Running the remote gate on such a change proves nothing about the diff and costs a container run. If a change touches docs **and** code, it is a code change - run the remote gate.
+   This is the same command `deploy-docs.yml` runs, it completes in about 20 seconds, and it is a real gate rather than a renderer - a broken relative link fails it with `[vitepress] N dead link(s) found.` and exit 1. CI agrees: `ci-build-test.yml` lists `docs/**` and `**/*.md` under `paths-ignore`, so a docs-only PR does not trigger the test workflow at all. Running the remote gate on such a change proves nothing about the diff and costs a container run. Cloud sessions use the PR documentation checks. If a change touches docs **and** code, it is a code change - require CORE through the session-appropriate validation route.
 
 8. **If you introduce new behaviour**, add corresponding tests first (see rule 1).
 
@@ -144,9 +180,9 @@ All test warnings will be treated as test failures once warnings-as-errors is en
 
 Before every `git push` on a PR branch:
 
-1. `scripts/repo/Invoke-PreCommitValidation.ps1` passes in the selected mode, or remote mode finds a qualifying exact-content strict Azure receipt.
-2. Do not rerun build/tests when a qualifying remote receipt applies.
-3. Record the chosen validation mode and strict gate evidence.
+1. **Cloud sessions:** commit a clean candidate, push to start or retry PR CI, and keep validation explicitly pending until the current candidate's required checks pass. No Azure/container gate or receipt is required. Follow [Cloud-session validation](#cloud-session-validation).
+2. **Configured workstations:** `scripts/repo/Invoke-PreCommitValidation.ps1` passes in the selected mode, or remote mode finds a qualifying exact-content strict Azure receipt. Do not rerun build/tests when that receipt applies.
+3. Record the chosen route and its evidence: PR CI run links and numeric results for cloud sessions, or strict gate evidence for workstations.
 4. No `--no-verify` used on commits containing code changes.
 
 ### Worktree Policy
@@ -206,7 +242,8 @@ chore(deps): bump Microsoft.Extensions.* to 10.0.1
 
 ## Build and test validation
 
-Use the selected strict repository gate for normal candidate validation:
+Cloud sessions use [PR GitHub Actions](#cloud-session-validation), not a host Azure/container
+gate. For configured developer workstations, use the selected strict repository gate:
 
 ```shell
 scripts/repo/Invoke-PreCommitValidation.ps1

@@ -21,19 +21,18 @@ namespace BotNexus.Gateway.Abstractions.Sessions;
 /// <para>
 /// Resolution is asynchronous because the conversation override is a store read, while
 /// <c>ShouldCompact</c> is deliberately synchronous and pure. The seam is therefore applied by the
-/// (already asynchronous) callers, which narrow <see cref="CompactionOptions.ContextWindowTokens"/>
-/// to the scoped window before handing the options to the compactor. That keeps the compactor's
-/// arithmetic - and therefore <see cref="CompactionOptions.TokenThresholdRatio"/> semantics and the
-/// byte-based <see cref="CompactionOptions.LargestEntryBytesThreshold"/> bloat trigger - completely
-/// unchanged, and makes the behaviour for an agent with no scoped window identical to before.
+/// asynchronous callers, which preserve the configured policy window while applying resolved
+/// model capacity or the explicitly selected inherited working window. Shared
+/// <see cref="CompactionThreshold"/> arithmetic keeps pre-turn, mid-loop and diagnostic policy aligned.
+/// The byte-based <see cref="CompactionOptions.LargestEntryBytesThreshold"/> trigger is independent.
 /// </para>
 /// </remarks>
 public interface ISessionContextWindowResolver
 {
     /// <summary>
-    /// Resolves the scoped context window for the supplied agent and conversation, using the same
-    /// precedence chain the dispatch path uses: conversation override, then the agent descriptor's
-    /// <c>ContextWindow</c>, then the resolved model's own context window.
+    /// Resolves the actual model capacity for Configured/Model policies. Conversation explicitly
+    /// selects conversation-over-agent-over-model working-window inheritance, bounded by known
+    /// model capacity. A conversation's model selection still determines the actual model.
     /// </summary>
     /// <param name="agentId">The agent owning the session.</param>
     /// <param name="conversationId">The conversation the session belongs to.</param>
@@ -43,6 +42,12 @@ public interface ISessionContextWindowResolver
     /// case the caller must keep <see cref="CompactionOptions.ContextWindowTokens"/> as configured.
     /// </returns>
     Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default);
+
+    /// <summary>
+    /// Resolves the execution working window with conversation-over-agent-over-model precedence.
+    /// Exhaustion reporting uses this independently of the policy that schedules compaction.
+    /// </summary>
+    Task<int?> ResolveWorkingWindowAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default);
 }
 
 /// <summary>
@@ -67,8 +72,8 @@ public static class ScopedCompactionWindow
 
     /// <summary>
     /// Returns <paramref name="options"/> with <see cref="CompactionOptions.ContextWindowTokens"/>
-    /// narrowed to <paramref name="scopedWindow"/>, or the original instance untouched when no scoped
-    /// window was resolved. Only the base window changes; every other option - notably
+    /// set to <paramref name="scopedWindow"/>, preserving the configured policy window separately,
+    /// or the original instance untouched when no window was resolved. Every other option - notably
     /// <see cref="CompactionOptions.TokenThresholdRatio"/> and
     /// <see cref="CompactionOptions.LargestEntryBytesThreshold"/> - is carried through verbatim.
     /// </summary>
@@ -76,7 +81,7 @@ public static class ScopedCompactionWindow
     {
         ArgumentNullException.ThrowIfNull(options);
         var usable = Usable(scopedWindow);
-        return usable.HasValue ? options with { ContextWindowTokens = usable.Value } : options;
+        return usable.HasValue ? options.WithResolvedWindow(usable.Value) : options;
     }
 
     private static int? Usable(int? value) => value is > 0 ? value : null;

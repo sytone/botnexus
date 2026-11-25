@@ -37,6 +37,14 @@ public sealed class SessionWriteInventoryTests
             + "and destructive reconciliation may delete only row ids this aggregate previously "
             + "observed. Post-run finalizers still use the fenced overload to protect lifecycle fields."),
 
+        new("sessions", nameof(ISessionStore.SaveCompactionAsync), WriteClassification.Fenced,
+            "the fenced aggregate history and session row, with conditional compaction metadata changes",
+            "The same lifecycle and optional detached-content fence as the fenced SaveAsync is "
+            + "checked under the store write lock. SQLite commits history and staged metadata in "
+            + "one transaction. Changes are published to the live metadata only after a successful "
+            + "write and only if their original values still match; ordinary aggregate saves and "
+            + "unsynchronized metadata writers retain their existing concurrency limitations."),
+
         new("sessions", nameof(ISessionStore.AppendEntriesAsync), WriteClassification.NarrowPatch,
             "new session_history rows plus updated_at",
             "Insert-only: existing history rows, metadata and status are never rewritten, so a "

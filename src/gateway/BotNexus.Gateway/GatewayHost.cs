@@ -1261,13 +1261,10 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
     /// <summary>
     /// Runs the pre-execution "prepare turn" steps for a single agent dispatch, extracted from
     /// <see cref="ProcessAsync"/> (#1503 increment 2, follow-up to #1381). In strict order:
-    /// (1) auto-compaction when <see cref="ISessionCompactor.ShouldCompact"/> is true (best-effort:
-    /// a compaction failure is logged and swallowed so the turn still proceeds, #363/#602),
-    /// (2) abandoned-turn detection (#790) -- if the previous turn stalled mid-tool, stop the stale
-    /// handle so the supervisor rebuilds clean context and append a user-visible notification, and
+    /// (1) interrupted-tool recovery after stopping the stale handle, before old unfinished calls can
+    /// pin the compaction tail, (2) best-effort auto-compaction using the recovered durable context, and
     /// (3) the write-ahead crash sentinel (#363) persisted before the LLM call. Every step mutates
-    /// and persists <paramref name="session"/> exactly as the inlined block did; no value produced
-    /// here is consumed by the caller, so the extraction is behaviour-preserving.
+    /// and persists <paramref name="session"/> before the provider runs.
     /// </summary>
     private async Task PrepareTurnAsync(
         GatewaySession session,
@@ -1277,6 +1274,8 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         string sessionId,
         CancellationToken cancellationToken)
     {
+        await RecoverAbandonedTurnAsync(session, typedAgentId, typedSessionId, cancellationToken).ConfigureAwait(false);
+
         // Resolve a fresh scoped window and trigger ceiling before asking ShouldCompact. The same
         // immutable options snapshot goes to the coordinator; the ceiling never changes capacity.
         var turnCompactionOptions = await ResolveScopedCompactionOptionsAsync(
@@ -1307,32 +1306,6 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
             }
         }
 
-        // Abandoned turn detection (#790): before starting the new turn, check if
-        // the previous turn stalled mid-tool-execution. If so, destroy the existing
-        // agent handle (forces fresh context on recreate) and notify the user.
-        var abandonedTurnResult = SessionContextProjector.DetectAbandonedTurn(session.History);
-        if (abandonedTurnResult.HasAbandonedTurn)
-        {
-            _logger.LogWarning(
-                "Abandoned turn detected for session '{SessionId}': {Count} dangling tool call(s). " +
-                "Destroying stale agent handle to prevent context replay.",
-                sessionId, abandonedTurnResult.AbandonedEntryCount);
-
-            // Kill the existing handle so the supervisor creates a fresh one with
-            // clean context from ProjectForResume (which drops tool entries).
-            var stopTask = _supervisor.StopAsync(typedAgentId, typedSessionId, cancellationToken);
-            if (stopTask is not null)
-                await stopTask;
-
-            // Add a notification entry so the user knows the prior turn was incomplete.
-            session.AddEntry(new SessionEntry
-            {
-                Role = MessageRole.Notification,
-                Content = $"[Previous turn did not complete — {abandonedTurnResult.AbandonedEntryCount} tool call(s) were abandoned. Starting fresh.]"
-            });
-            await _sessions.SaveAsync(session, cancellationToken);
-        }
-
         // Write-ahead Layer 2: crash sentinel written before the LLM call.
         // If the gateway restarts mid-turn, this sentinel survives in the session store,
         // showing an interrupted-turn marker to the user rather than a silent gap (#363).
@@ -1344,6 +1317,28 @@ public sealed class GatewayHost : BackgroundService, IChannelDispatcher, IInboun
         };
         session.AddEntry(crashSentinel);
         await _sessions.SaveAsync(session, cancellationToken);
+    }
+
+    private async Task RecoverAbandonedTurnAsync(
+        GatewaySession session, AgentId agentId, SessionId sessionId, CancellationToken cancellationToken)
+    {
+        if (!SessionContextProjector.DetectAbandonedTurn(session.GetHistorySnapshot()).HasAbandonedTurn)
+            return;
+
+        await _supervisor.StopAsync(agentId, sessionId, cancellationToken).ConfigureAwait(false);
+        // Stopping may flush a genuine completion. Re-read before declaring any outcome unknown.
+        var snapshot = session.SnapshotHistoryForCompaction();
+        var (recovered, recoveredCount) = SessionContextProjector.RecoverAbandonedToolCalls(snapshot.Entries);
+        if (recoveredCount == 0)
+            return;
+        if (session.TryReplaceHistoryFromSnapshot(recovered, snapshot.DestructiveVersion, snapshot.Count)
+            == HistoryReplaceOutcome.Aborted)
+            throw new InvalidOperationException("Session history changed during interrupted-tool recovery. Retry the request.");
+        await _sessions.SaveAsync(session, cancellationToken).ConfigureAwait(false);
+        _logger.LogWarning(
+            "Recovered {Count} interrupted tool call(s) for session {SessionId} before compaction; " +
+            "original audit rows are historical and outcomes remain unknown.",
+            recoveredCount, sessionId);
     }
 
     private async Task SendSessionStatusRejectedAsync(

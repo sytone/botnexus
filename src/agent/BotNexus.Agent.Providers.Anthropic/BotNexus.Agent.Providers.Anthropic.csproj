@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <InternalsVisibleTo Include="BotNexus.Agent.Providers.Anthropic.Tests" />
+    <InternalsVisibleTo Include="BotNexus.Gateway.Tests" />
   </ItemGroup>
 
   <ItemGroup>

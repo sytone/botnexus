@@ -169,8 +169,24 @@ public sealed class ConfigSchemaMetadataFitnessTests
 
         ((int?)config["world"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
         ((int?)config["gateway"]?["compaction"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
+        ((int?)config["gateway"]?["compaction"]?["preservedTailTokens"]).ShouldBe(12_000);
         ((int?)config["agents"]?["agent-a"]?["compactionTokenCeiling"]).ShouldBe(ceiling);
         ((string?)config["providers"]?["provider-a"]?["apiKey"]).ShouldBe("***");
+    }
+
+    [Fact]
+    public void Build_CompactionPolicy_IsEditableWithoutExposingOperationState()
+    {
+        var properties = GetObjectSchema("gateway/compaction")["properties"].ShouldBeOfType<JsonObject>();
+        properties.ContainsKey("preserveLatestRequest").ShouldBeFalse();
+        properties.ContainsKey("configuredWindowTokens").ShouldBeFalse();
+        var tail = GetPropertySchema("gateway/compaction", "preservedTailTokens");
+        ((string?)tail["type"]).ShouldBe("integer");
+        ((string?)tail["x-ui-widget"]).ShouldBe("number");
+        tail.ContainsKey("x-ui-secret").ShouldBeFalse();
+        var source = GetPropertySchema("gateway/compaction", "policySource");
+        source["enum"].ShouldBeOfType<JsonArray>().Select(value => value?.GetValue<string>())
+            .ShouldBe(["Configured", "Conversation", "Model"]);
     }
 
     private static void AssertMemberMetadata(Type declaringType, string path, string jsonName)

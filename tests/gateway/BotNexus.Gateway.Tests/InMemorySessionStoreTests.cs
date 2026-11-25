@@ -11,6 +11,33 @@ namespace BotNexus.Gateway.Tests;
 public sealed class InMemorySessionStoreTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompactionSave_ConditionallyPublishesMetadata(bool newerMeasurement)
+    {
+        var store = new InMemorySessionStore();
+        var session = await store.GetOrCreateAsync(SessionId.Create(), AgentId.From("agent-a"));
+        session.ConversationId = ConversationId.Create();
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        var fence = SessionWriteFence.Capture(session);
+        if (newerMeasurement)
+            session.Metadata["lastProviderPromptTokens"] = 2000;
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+
+        (await store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null),
+             new("ineffectiveByteCompactionSignature", false, null, "signature")]))
+            .ShouldBe(SessionSaveOutcome.Persisted);
+
+        var saved = (await store.GetAsync(session.SessionId)).ShouldNotBeNull();
+        saved.GetHistorySnapshot().ShouldContain(entry => entry.IsCompactionSummary);
+        saved.Metadata["ineffectiveByteCompactionSignature"].ShouldBe("signature");
+        if (newerMeasurement) saved.Metadata["lastProviderPromptTokens"].ShouldBe(2000);
+        else saved.Metadata.ShouldNotContainKey("lastProviderPromptTokens");
+    }
+
+    [Theory]
     [InlineData("append")]
     [InlineData("replace")]
     [InlineData("metadata")]

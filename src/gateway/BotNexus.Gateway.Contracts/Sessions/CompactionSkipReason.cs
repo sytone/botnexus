@@ -53,6 +53,12 @@ public sealed class CompactionSkipReason : IEquatable<CompactionSkipReason>
     /// </summary>
     public static readonly CompactionSkipReason NoSummarizableTurns = Register("NoSummarizableTurns");
 
+    /// <summary>The latest request or unfinished tool groups cannot fit the retained-context token budget.</summary>
+    public static readonly CompactionSkipReason MandatoryContextExceedsBudget = Register("MandatoryContextExceedsBudget");
+
+    /// <summary>An automatic token-pressure cut would not make the estimated working context smaller.</summary>
+    public static readonly CompactionSkipReason NoContextReduction = Register("NoContextReduction");
+
     /// <summary>The summarization call exceeded the configured compaction timeout.</summary>
     public static readonly CompactionSkipReason SummarizationTimeout = Register("SummarizationTimeout");
 

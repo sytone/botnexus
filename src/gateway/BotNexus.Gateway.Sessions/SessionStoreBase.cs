@@ -99,6 +99,14 @@ public abstract class SessionStoreBase : ISessionStore
     }
 
     /// <inheritdoc />
+    public virtual Task<SessionSaveOutcome> SaveCompactionAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        IReadOnlyList<CompactionMetadataChange> metadataChanges,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This session store cannot persist compaction metadata with a fenced history write.");
+
+    /// <inheritdoc />
     public virtual async Task<UnresolvedCrashSentinelPage> ListUnresolvedCrashSentinelsAsync(
         int limit, string? cursor = null, CancellationToken cancellationToken = default)
     {

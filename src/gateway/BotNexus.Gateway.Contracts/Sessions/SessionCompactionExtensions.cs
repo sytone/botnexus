@@ -48,4 +48,28 @@ public static class SessionCompactionExtensions
             result.SnapshotDestructiveVersion,
             result.SnapshotHistoryCount);
     }
+
+    /// <summary>
+    /// Applies staged metadata changes only while their original values still match.
+    /// Stores use this on a private candidate before persistence and on the live session
+    /// only after the fenced write succeeds.
+    /// </summary>
+    public static void ApplyCompactionMetadata(
+        IDictionary<string, object?> metadata,
+        IReadOnlyList<CompactionMetadataChange> changes)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        ArgumentNullException.ThrowIfNull(changes);
+        foreach (var change in changes)
+        {
+            var present = metadata.TryGetValue(change.Key, out var current);
+            if (present != change.ExpectedPresent || (present && !ReferenceEquals(current, change.ExpectedValue)))
+                continue;
+
+            if (change.Replacement is null)
+                metadata.Remove(change.Key);
+            else
+                metadata[change.Key] = change.Replacement;
+        }
+    }
 }

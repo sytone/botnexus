@@ -8,6 +8,7 @@ using BotNexus.Gateway.Abstractions.Models;
 using BotNexus.Gateway.Abstractions.Sessions;
 using BotNexus.Gateway.Isolation;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 
 namespace BotNexus.Gateway.Sessions;
 
@@ -29,21 +30,32 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
     private readonly IConversationStore? _conversations;
     private readonly LlmClient? _llmClient;
     private readonly ILogger<SessionContextWindowResolver> _logger;
+    private readonly IOptionsMonitor<CompactionOptions>? _options;
 
     public SessionContextWindowResolver(
         ILogger<SessionContextWindowResolver> logger,
         IAgentRegistry? registry = null,
         IConversationStore? conversations = null,
-        LlmClient? llmClient = null)
+        LlmClient? llmClient = null,
+        IOptionsMonitor<CompactionOptions>? options = null)
     {
         _logger = logger;
         _registry = registry;
         _conversations = conversations;
         _llmClient = llmClient;
+        _options = options;
     }
 
     /// <inheritdoc />
-    public async Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+    public Task<int?> ResolveAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+        => ResolveWindowAsync(agentId, conversationId, useCompactionPolicy: true, cancellationToken);
+
+    /// <inheritdoc />
+    public Task<int?> ResolveWorkingWindowAsync(AgentId agentId, ConversationId conversationId, CancellationToken cancellationToken = default)
+        => ResolveWindowAsync(agentId, conversationId, useCompactionPolicy: false, cancellationToken);
+
+    private async Task<int?> ResolveWindowAsync(
+        AgentId agentId, ConversationId conversationId, bool useCompactionPolicy, CancellationToken cancellationToken)
     {
         var descriptor = TryGetDescriptor(agentId);
         var conversation = await TryGetConversationAsync(conversationId, cancellationToken).ConfigureAwait(false);
@@ -81,10 +93,15 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
             conversation?.ContextWindowOverride.HasValue == true ? "conversation"
                 : descriptor?.ContextWindow.HasValue == true ? "agent" : null,
             model.ToContextDeclarations());
-        var resolved = budget.EffectiveWorkingBudgetTokens;
+        var source = _options?.CurrentValue.PolicySource ?? CompactionPolicySource.Configured;
+        var resolved = !useCompactionPolicy || source == CompactionPolicySource.Conversation
+            ? budget.EffectiveWorkingBudgetTokens
+            : budget.ModelContextWindowTokens;
+        if (budget.ModelContextWindowTokens is { } capacity && resolved is { } working)
+            resolved = Math.Min(working, capacity);
 
         _logger.LogDebug(
-            "Scoped compaction window for agent {AgentId} / conversation {ConversationId}: " +
+            "Scoped window for agent {AgentId} / conversation {ConversationId}: " +
             "conversationOverride {ConversationOverride}, agentWindow {AgentWindow}, modelWindow {ModelWindow} => {Resolved}.",
             agentId.Value,
             conversationId.Value,
@@ -125,7 +142,7 @@ public sealed class SessionContextWindowResolver : ISessionContextWindowResolver
         {
             return await _conversations.GetAsync(conversationId, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException)
         {
             _logger.LogDebug(ex, "Could not read the context-window override for conversation {ConversationId}.", conversationId.Value);
             return null;

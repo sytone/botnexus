@@ -71,6 +71,13 @@ public sealed record CompactionResult
     public CompactionSkipReason? SkipReason { get; init; }
 
     /// <summary>
+    /// Conditional metadata changes to apply only when the corresponding history replacement
+    /// succeeds. Expected values are compared by identity so a newer provider measurement
+    /// with the same numeric value is not mistaken for the original measurement.
+    /// </summary>
+    public IReadOnlyList<CompactionMetadataChange>? MetadataChanges { get; init; }
+
+    /// <summary>
     /// Builds a "skipped / aborted" result (history unchanged): <see cref="Succeeded"/> = false,
     /// empty summary, no compacted history. Centralises the five previously-duplicated
     /// <c>Succeeded = false</c> literal blocks in <c>LlmSessionCompactor.CompactAsync</c> (breaker-open,

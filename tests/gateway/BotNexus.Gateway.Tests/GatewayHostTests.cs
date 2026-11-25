@@ -2171,8 +2171,10 @@ public sealed partial class GatewayHostTests
             "crash sentinel must be removed from session history on clean turn completion (#363)");
     }
 
-    [Fact]
-    public async Task DispatchAsync_WhenPreviousTurnAbandonedMidTool_StopsHandleAndNotifiesUser()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task DispatchAsync_WhenPreviousTurnAbandonedMidTool_StopsHandleAndNotifiesUser(bool completesWhileStopping)
     {
         // Arrange: a session whose history ends with a dangling ToolStart (no matching ToolEnd)
         // from a prior user turn. When the new inbound message arrives, PrepareTurnAsync's
@@ -2198,6 +2200,16 @@ public sealed partial class GatewayHostTests
         // ToolStart (ToolArgs set) with no matching ToolEnd.
         session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "do the thing" });
         session.AddEntry(new SessionEntry { Role = MessageRole.Tool, Content = "some_tool", ToolCallId = "call-1", ToolArgs = "{}" });
+        supervisor.Setup(value => value.StopAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()))
+            .Callback(() =>
+            {
+                if (completesWhileStopping)
+                    session.AddEntry(new SessionEntry
+                    {
+                        Role = MessageRole.Tool, ToolCallId = "call-1",
+                        Kind = MessageKind.ToolResult, Content = "Observed completion."
+                    });
+            }).Returns(Task.CompletedTask);
 
         var sessions = new Mock<ISessionStore>();
         sessions.Setup(s => s.GetOrCreateAsync(
@@ -2206,9 +2218,15 @@ public sealed partial class GatewayHostTests
             It.IsAny<CancellationToken>())).ReturnsAsync(session);
         sessions.Setup(s => s.SaveAsync(session, It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
+            .Callback(() => session.History.Single(entry => entry.IsToolStartRow()).IsHistory
+                .ShouldBe(!completesWhileStopping, "recovery must finish before compaction plans its mandatory tail"))
+            .Returns(false);
 
         var channel = CreateChannelAdapter("web", supportsStreaming: false);
-        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object, new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object));
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager(channel.Object), compactor: compactor.Object);
 
         // Act
         await host.DispatchAsync(CreateMessage("second message", sessionId: "session-abandon"));
@@ -2219,9 +2237,64 @@ public sealed partial class GatewayHostTests
             BotNexus.Domain.Primitives.AgentId.From("agent-abandon"),
             BotNexus.Domain.Primitives.SessionId.From("session-abandon"),
             It.IsAny<CancellationToken>()), Times.AtLeastOnce);
+        compactor.Verify(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()), Times.Once);
+        if (completesWhileStopping)
+        {
+            session.History.ShouldNotContain(entry => entry.ToolIsIncomplete);
+            session.History.Single(entry => entry.Kind == MessageKind.ToolResult).Content.ShouldBe("Observed completion.");
+            return;
+        }
         session.History.ShouldContain(
             e => e.Role.Equals(MessageRole.Notification) && e.Content != null && e.Content.Contains("did not complete"),
             "abandoned-turn detection must add a notification entry when a prior turn stalled mid-tool (#790)");
+        session.History.Single(e => e.ToolCallId == "call-1").IsHistory.ShouldBeTrue(
+            "an interrupted call must not pin every subsequent turn in the working context");
+        session.History.ShouldContain(e => e.Role == MessageRole.Assistant
+            && e.Content != null && e.Content.Contains("call-1") && e.Content.Contains("unknown")
+            && e.Content.Contains("{}"));
+        session.History.ShouldNotContain(e => e.Kind == MessageKind.ToolResult,
+            "host recovery must not invent a tool result");
+    }
+
+    [Fact]
+    public async Task DispatchAsync_AmbiguousToolEvidence_DoesNotRecoverAnInventedPairing()
+    {
+        var session = new GatewaySession
+        {
+            SessionId = SessionId.From("ambiguous-recovery"), AgentId = AgentId.From("agent-a")
+        };
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "Inspect the files." });
+        foreach (var path in new[] { "a.cs", "b.cs" })
+            session.AddEntry(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "ambiguous", ToolArgs = $"{{\"path\":\"{path}\"}}", Kind = MessageKind.ToolStart
+            });
+        session.AddEntry(new SessionEntry
+        {
+            Role = MessageRole.Tool, Content = "source of unknown invocation",
+            ToolName = "read", ToolCallId = "ambiguous", Kind = MessageKind.ToolResult
+        });
+        var router = new Mock<IMessageRouter>();
+        router.Setup(value => value.ResolveAsync(It.IsAny<InboundMessage>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(["agent-a"]);
+        var sessions = new Mock<ISessionStore>();
+        sessions.Setup(value => value.GetOrCreateAsync(session.SessionId, session.AgentId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(session);
+        var supervisor = new Mock<IAgentSupervisor>();
+        supervisor.Setup(value => value.GetOrCreateAsync(session.AgentId, session.SessionId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(CreatePromptHandle("agent-a", "ambiguous-recovery", "response").Object);
+        await using var host = CreateHost(supervisor.Object, router.Object, sessions.Object,
+            new RecordingActivityBroadcaster(), CreateChannelManager());
+
+        var error = await Should.ThrowAsync<InvalidOperationException>(async () =>
+            await host.DispatchAsync(CreateMessage("Continue.", sessionId: "ambiguous-recovery")));
+
+        error.Message.ShouldContain("ambiguous");
+        session.History.Where(entry => entry.IsToolStartRow()).ShouldAllBe(entry => !entry.IsHistory);
+        session.History.ShouldNotContain(entry => entry.ToolIsIncomplete);
+        supervisor.Verify(value => value.GetOrCreateAsync(session.AgentId, session.SessionId,
+            It.IsAny<CancellationToken>()), Times.Never);
     }
 
     [Fact]

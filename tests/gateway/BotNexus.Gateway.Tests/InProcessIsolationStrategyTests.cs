@@ -490,13 +490,201 @@ public sealed class InProcessIsolationStrategyTests
 
         replacement.ShouldNotBeNull();
         decisionOptions.ShouldNotBeNull();
-        decisionOptions.ContextWindowTokens.ShouldBe(128_000);
+        decisionOptions.ContextWindowTokens.ShouldBe(8_192, "known model capacity must bound an oversized descriptor window");
         decisionOptions.TokenThresholdRatio.ShouldBe(0.6);
         decisionOptions.CompactionTokenCeiling.ShouldBe(50_000);
         executionOptions.ShouldBeSameAs(decisionOptions);
         global.ContextWindowTokens.ShouldBe(200_000);
         coordinator.Verify(value => value.CompactAsync(session.AgentId, session, cancellation.Token,
             false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()), Times.Once);
+    }
+
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CreateAsync_CompactedTypedToolGroups_RestoreOrFailClosed(bool midLoop, bool unfinishedTool)
+    {
+        var session = new GatewaySession { SessionId = SessionId.From("retained-tools"), AgentId = AgentId.From("agent-a") };
+        session.AddEntries(new[]
+        {
+            new SessionEntry { Role = MessageRole.System, Content = "Earlier work is summarized.", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "Continue investigating." },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "a", ToolArgs = "{\"path\":\"a.cs\"}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "", ToolName = "read", ToolCallId = "b", ToolArgs = "{\"path\":\"b.cs\"}", Kind = MessageKind.ToolStart },
+            new SessionEntry { Role = MessageRole.Tool, Content = "source b", ToolName = "read", ToolCallId = "b", Kind = MessageKind.ToolResult },
+            new SessionEntry { Role = MessageRole.Tool, Content = "source a", ToolName = "read", ToolCallId = "a", Kind = MessageKind.ToolResult }
+        });
+        if (unfinishedTool)
+            session.ReplaceHistory(session.GetHistorySnapshot().Where(entry => entry.ToolCallId != "a" || entry.Kind != MessageKind.ToolResult).ToArray());
+        var store = new Mock<ISessionStore>();
+        store.Setup(value => value.GetAsync(session.SessionId, It.IsAny<CancellationToken>())).ReturnsAsync(session);
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>())).Returns(true);
+        var coordinator = new Mock<ISessionCompactionCoordinator>();
+        coordinator.Setup(value => value.CompactAsync(session.AgentId, session, It.IsAny<CancellationToken>(),
+            false, CompactionHandlePolicy.KeepCurrent, It.IsAny<CompactionOptions?>()))
+            .ReturnsAsync(new SessionCompactionOutcome(true, true, HistoryReplaceOutcome.Applied, 10, 5, 20000, 2000, null));
+        var services = new ServiceCollection();
+        services.AddSingleton(store.Object);
+        services.AddSingleton(compactor.Object);
+        services.AddSingleton(coordinator.Object);
+        services.AddSingleton<IOptionsMonitor<CompactionOptions>>(new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
+        using var serviceProvider = services.BuildServiceProvider();
+        var strategy = CreateStrategyWithRegisteredModel(serviceProvider: serviceProvider);
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = session.SessionId,
+            History = midLoop ? [] : session.GetHistorySnapshot()
+        });
+        IReadOnlyList<AgentMessage> messages;
+        if (midLoop)
+        {
+            var hook = GetAgentOptions(handle).ContextCompactionService.ShouldNotBeNull();
+            if (unfinishedTool)
+            {
+                var previous = GetMessages(handle).ToArray();
+                var failure = await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None));
+                failure.Message.ShouldContain("restore retained tool evidence");
+                GetMessages(handle).ShouldBe(previous);
+                return;
+            }
+            var replacement = (await hook(CancellationToken.None)).ShouldNotBeNull();
+            replacement.SystemPrompt.ShouldNotBeNull().ShouldContain("Earlier work is summarized.");
+            messages = replacement.Messages;
+        }
+        else
+        {
+            messages = GetMessages(handle);
+        }
+
+        messages.OfType<ToolResultAgentMessage>().Select(message => message.ToolCallId).Order()
+            .ShouldBe(new[] { "a", "b" });
+        var calls = messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? []).ToArray();
+        calls.Select(call => call.Id).Order().ShouldBe(new[] { "a", "b" });
+        calls.Single(call => call.Id == "a").Arguments["path"]?.ToString().ShouldBe("a.cs");
+        messages.OfType<ToolResultAgentMessage>().Single(message => message.ToolCallId == "a")
+            .Result.Content.Single().Value.ShouldBe("source a");
+        messages.OfType<AgentCoreUserMessage>().Single().Content.ShouldBe("Continue investigating.");
+        var openCalls = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var message in messages)
+        {
+            if (message is AssistantAgentMessage assistant)
+            {
+                openCalls.ShouldBeEmpty();
+                foreach (var call in assistant.ToolCalls ?? [])
+                    openCalls.Add(call.Id).ShouldBeTrue();
+            }
+            if (message is ToolResultAgentMessage tool)
+                openCalls.Remove(tool.ToolCallId).ShouldBeTrue();
+        }
+        openCalls.ShouldBeEmpty();
+        var providerMessages = await BotNexus.Agent.Core.ExtensionPoints.Messages.DefaultProviderMessageTransformer
+            .TransformAsync(messages, CancellationToken.None);
+        providerMessages.OfType<AssistantMessage>().SelectMany(message => message.Content.OfType<ToolCallContent>())
+            .Select(call => call.Id).Order().ShouldBe(new[] { "a", "b" });
+        providerMessages.OfType<ToolResultMessage>().Select(message => message.ToolCallId).Order()
+            .ShouldBe(new[] { "a", "b" });
+        var model = new LlmModel("projection", "Projection", "openai-responses", "openai", "https://example.test",
+            false, ["text"], new ModelCost(0, 0, 0, 0), 128_000, 4096);
+        var responses = BotNexus.Agent.Providers.Core.Streaming.ResponsesMessageConverter
+            .ConvertMessages(providerMessages, model);
+        responses.Where(item => item?["type"]?.GetValue<string>() == "function_call")
+            .Select(item => item?["call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        responses.Where(item => item?["type"]?.GetValue<string>() == "function_call_output")
+            .Select(item => item?["call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        var completions = BotNexus.Agent.Providers.Core.Streaming.CompletionsMessageConverter.Convert(
+            null, model, providerMessages, new BotNexus.Agent.Providers.Core.Compatibility.OpenAICompletionsCompat());
+        completions.Where(item => item?["role"]?.GetValue<string>() == "tool")
+            .Select(item => item?["tool_call_id"]?.GetValue<string>()).Order().ShouldBe(["a", "b"]);
+        var anthropic = BotNexus.Agent.Providers.Anthropic.AnthropicMessageConverter.ConvertMessages(
+            providerMessages, model with { Api = "anthropic-messages", Provider = "anthropic" }, isOAuthToken: false);
+        var blocks = anthropic.Select(message => message["content"]).OfType<List<object>>()
+            .SelectMany(content => content)
+            .OfType<Dictionary<string, object?>>().ToArray();
+        blocks.Where(block => (string?)block["type"] == "tool_use")
+            .Select(block => (string?)block["id"]).Order().ShouldBe(["a", "b"]);
+        blocks.Where(block => (string?)block["type"] == "tool_result")
+            .Select(block => (string?)block["tool_use_id"]).Order().ShouldBe(["a", "b"]);
+    }
+
+    [Fact]
+    public async Task CreateAsync_ReusedToolCallIds_ReplaysEachCompletedExchange()
+    {
+        var history = new List<SessionEntry>
+        {
+            new() { Role = MessageRole.System, Content = "Earlier work.", IsCompactionSummary = true },
+            new() { Role = MessageRole.User, Content = "Inspect both files." }
+        };
+        for (var i = 0; i < 2; i++)
+        {
+            history.Add(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "reused", ToolArgs = $"{{\"path\":\"{i}.cs\"}}", Kind = MessageKind.ToolStart
+            });
+            history.Add(new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = $"source {i}", ToolName = "read",
+                ToolCallId = "reused", Kind = MessageKind.ToolResult
+            });
+        }
+        var strategy = CreateStrategyWithRegisteredModel();
+
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = SessionId.From("reused-tool-identities"), History = history
+        });
+
+        GetMessages(handle).OfType<ToolResultAgentMessage>()
+            .Select(message => message.Result.Content.Single().Value).ShouldBe(["source 0", "source 1"]);
+        GetMessages(handle).OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? [])
+            .Select(call => call.Arguments["path"]?.ToString()).ShouldBe(["0.cs", "1.cs"]);
+    }
+
+    [Fact]
+    public async Task CreateAsync_CompactedHistoryWithInterruptedTool_RecoversWithoutInventingAResult()
+    {
+        var history = new[]
+        {
+            new SessionEntry { Role = MessageRole.System, Content = "Earlier work is summarized.", IsCompactionSummary = true },
+            new SessionEntry { Role = MessageRole.User, Content = "Inspect the build." },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "interrupted-read", ToolArgs = "{\"path\":\"build.log\"}", Kind = MessageKind.ToolStart
+            },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "", ToolName = "read",
+                ToolCallId = "completed-read", ToolArgs = "{\"path\":\"other.log\"}", Kind = MessageKind.ToolStart
+            },
+            new SessionEntry
+            {
+                Role = MessageRole.Tool, Content = "completed evidence", ToolName = "read",
+                ToolCallId = "completed-read", Kind = MessageKind.ToolResult
+            },
+            new SessionEntry { Role = MessageRole.User, Content = "Continue safely after the interruption." }
+        };
+        var strategy = CreateStrategyWithRegisteredModel();
+
+        await using var handle = await strategy.CreateAsync(CreateDescriptor(), new AgentExecutionContext
+        {
+            SessionId = SessionId.From("interrupted-compacted-session"),
+            History = history
+        });
+
+        var messages = GetMessages(handle);
+        messages.OfType<ToolResultAgentMessage>().Select(message => message.ToolCallId).ShouldBe(["completed-read"]);
+        messages.OfType<AssistantAgentMessage>().SelectMany(message => message.ToolCalls ?? [])
+            .Select(call => call.Id).ShouldBe(["completed-read"]);
+        messages.OfType<ToolResultAgentMessage>().Single().Result.Content.Single().Value.ShouldBe("completed evidence");
+        messages.OfType<AssistantAgentMessage>().ShouldContain(message =>
+            message.Content.Contains("interrupted-read", StringComparison.Ordinal) &&
+            message.Content.Contains("unknown", StringComparison.OrdinalIgnoreCase));
+        messages.OfType<AgentCoreUserMessage>().Last().Content.ShouldBe("Continue safely after the interruption.");
+        history.Length.ShouldBe(6);
+        history[2].IsHistory.ShouldBeFalse();
     }
 
     [Fact]
@@ -514,13 +702,23 @@ public sealed class InProcessIsolationStrategyTests
             .ReturnsAsync(new ScopedCompactionCeiling(0, "conversation"))
             .ThrowsAsync(new OperationCanceledException());
         var observed = new List<int?>();
+        var observedWindows = new List<int>();
+        var windowReads = 0;
+        var windowResolver = new Mock<ISessionContextWindowResolver>();
+        windowResolver.Setup(value => value.ResolveAsync(session.AgentId, session.ConversationId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => ++windowReads * 1000);
         var compactor = new Mock<ISessionCompactor>();
         compactor.Setup(value => value.ShouldCompact(session.Session, It.IsAny<CompactionOptions>()))
-            .Callback<Session, CompactionOptions>((_, options) => observed.Add(options.CompactionTokenCeiling)).Returns(false);
+            .Callback<Session, CompactionOptions>((_, options) =>
+            {
+                observed.Add(options.CompactionTokenCeiling);
+                observedWindows.Add(options.ContextWindowTokens);
+            }).Returns(false);
         var coordinator = new Mock<ISessionCompactionCoordinator>();
         var services = new ServiceCollection();
         services.AddSingleton(store.Object);
         services.AddSingleton(resolver.Object);
+        services.AddSingleton(windowResolver.Object);
         services.AddSingleton(compactor.Object);
         services.AddSingleton(coordinator.Object);
         services.AddSingleton<IOptionsMonitor<CompactionOptions>>(new StaticOptionsMonitor<CompactionOptions>(new CompactionOptions()));
@@ -531,6 +729,7 @@ public sealed class InProcessIsolationStrategyTests
         hook.ShouldNotBeNull();
         for (var turn = 0; turn < 3; turn++) (await hook(CancellationToken.None)).ShouldBeNull();
         observed.ShouldBe(new int?[] { 100, 200, null });
+        observedWindows.ShouldBe([1000, 2000, 3000]);
         (await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None))).Message.ShouldContain("policy");
         (await Should.ThrowAsync<ProactiveCompactionException>(async () => await hook(CancellationToken.None))).Message.ShouldContain("policy");
         using var cancellation = new CancellationTokenSource();

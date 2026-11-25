@@ -541,10 +541,9 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{summaryBlock}";
             }
 
-            initialMessages = resumeEntries
-                .Select(ConvertSessionEntryToAgentMessage)
-                .OfType<AgentMessage>()
-                .ToList();
+            initialMessages = summaries.Count > 0
+                ? ConvertCompactedHistoryToAgentMessages(context.History, recoverInterruptedTools: true)
+                : resumeEntries.Select(ConvertSessionEntryToAgentMessage).OfType<AgentMessage>().ToList();
 
             _logger.LogInformation(
                 "Injecting {Count} history messages ({Summaries} summary folded into prompt, of {Total} entries) into agent context for session '{SessionId}'",
@@ -561,15 +560,13 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
         var compactionCoordinator = _serviceProvider.GetService<ISessionCompactionCoordinator>();
         var compactionOptions = _serviceProvider.GetService<IOptionsMonitor<CompactionOptions>>();
         var compactionCeilingResolver = _serviceProvider.GetService<ISessionCompactionCeilingResolver>();
+        var compactionWindowResolver = _serviceProvider.GetService<ISessionContextWindowResolver>();
         if (compactor is not null && compactionCoordinator is not null && compactionOptions is not null && sessionStore is not null)
         {
             var compactSessionId = context.SessionId;
             var compactAgentId = descriptor.AgentId;
-            // #2896: this path has already resolved the effective window through
-            // ModelOverrideResolver above (conversation override > agent descriptor), so reuse it
-            // rather than re-reading the stores, falling back to the registered model's own window.
-            // Null leaves CompactionOptions.ContextWindowTokens exactly as configured.
-            var scopedContextWindow = contextBudget.EffectiveWorkingBudgetTokens;
+            // Resolve live policy on every check. Legacy hosts without a resolver use the
+            // handle's known capacity (or its scoped budget only when inheritance is selected).
             maybeCompactAsync = async cancellationToken =>
             {
                 GatewaySession? liveSession = null;
@@ -595,7 +592,14 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                         }
 
                         // Resolve EVERY check from the live conversation; never cache a ceiling.
-                        scopedOptions = ScopedCompactionWindow.Apply(compactionOptions.CurrentValue, scopedContextWindow);
+                        var currentOptions = compactionOptions.CurrentValue;
+                        var scopedContextWindow = compactionWindowResolver is not null
+                            ? await compactionWindowResolver.ResolveAsync(
+                                compactAgentId, liveSession.ConversationId, cancellationToken).ConfigureAwait(false)
+                            : currentOptions.PolicySource == CompactionPolicySource.Conversation
+                                ? contextBudget.EffectiveWorkingBudgetTokens
+                                : contextBudget.ModelContextWindowTokens;
+                        scopedOptions = ScopedCompactionWindow.Apply(currentOptions, scopedContextWindow);
                         if (compactionCeilingResolver is not null)
                         {
                             var ceiling = await compactionCeilingResolver.ResolveAsync(
@@ -697,10 +701,16 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
                     : string.IsNullOrWhiteSpace(enrichedSystemPrompt)
                         ? string.Join("\n\n", compactedSummaries)
                         : $"{enrichedSystemPrompt}\n\n## Prior conversation (compacted summary)\n{string.Join("\n\n", compactedSummaries)}";
-                var compactedMessages = compactedEntries
-                    .Select(ConvertSessionEntryToAgentMessage)
-                    .OfType<AgentMessage>()
-                    .ToList();
+                List<AgentMessage> compactedMessages;
+                try
+                {
+                    compactedMessages = ConvertCompactedHistoryToAgentMessages(liveSession.History);
+                }
+                catch (Exception ex) when (ex is JsonException or InvalidOperationException)
+                {
+                    throw new ProactiveCompactionException(
+                        "Required proactive compaction could not restore retained tool evidence.", retryable: false, ex);
+                }
 
                 return new AgentContext(compactedSystemPrompt, compactedMessages, tools);
             };
@@ -1208,6 +1218,67 @@ public sealed class InProcessIsolationStrategy : IIsolationStrategy
 
         var conversations = await conversationStore.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
         return conversations.FirstOrDefault(conversation => conversation.ActiveSessionId == sessionId)?.ConversationId;
+    }
+
+    private static List<AgentMessage> ConvertCompactedHistoryToAgentMessages(
+        IReadOnlyList<SessionEntry> history, bool recoverInterruptedTools = false)
+    {
+        // Legacy rows lack the typed pairing evidence needed for safe provider replay.
+        var visible = SessionContextProjector.ProjectForLiveContext(history)
+            .Where(entry => entry.Role != MessageRole.Tool
+                || entry.Kind == MessageKind.ToolStart || entry.Kind == MessageKind.ToolResult).ToArray();
+        foreach (var entry in visible.Where(entry => entry.Role.Equals(MessageRole.Tool)))
+        {
+            if (string.IsNullOrEmpty(entry.ToolCallId))
+                throw new InvalidOperationException("Retained typed tool evidence is missing its call identity.");
+        }
+        var spans = SessionContextProjector.GetToolCallSpans(visible);
+        if (spans.Any(span => span.Ambiguous || span.StartIndex is null
+            || (!recoverInterruptedTools && span.ResultIndex is null)))
+            throw new InvalidOperationException("Retained tool evidence contains an unfinished or orphaned call.");
+        var results = new Dictionary<SessionEntry, SessionEntry>(ReferenceEqualityComparer.Instance);
+        foreach (var span in spans)
+            if (span.StartIndex is { } start && span.ResultIndex is { } end)
+                results.Add(visible[start], visible[end]);
+
+        var messages = new List<AgentMessage>();
+        foreach (var entry in visible)
+        {
+            if (entry.Role.Equals(MessageRole.Tool))
+            {
+                if (entry.Kind != MessageKind.ToolStart)
+                    continue;
+                if (entry.ToolCallId is not { } id || string.IsNullOrWhiteSpace(entry.ToolName) || entry.ToolArgs is null)
+                    throw new InvalidOperationException("Retained tool evidence is missing its name or arguments.");
+                var args = JsonSerializer.Deserialize<Dictionary<string, object?>>(entry.ToolArgs)
+                    ?? throw new InvalidOperationException($"Retained tool arguments are null for '{id}'.");
+                if (!results.TryGetValue(entry, out var result))
+                {
+                    // A cold handle cannot finish the old process's call. Keep its actual
+                    // arguments and unknown outcome without fabricating a provider tool result.
+                    messages.Add(new AssistantAgentMessage(
+                        $"Interrupted tool call '{entry.ToolName}' (id '{id}') has an unknown outcome; " +
+                        "no result was recorded. Inspect existing evidence before repeating side effects. " +
+                        $"Arguments: {entry.ToolArgs}"));
+                    continue;
+                }
+
+                // Typed audit rows preserve the observed call and result, but not the original
+                // assistant batch. Replay complete exchanges rather than orphaned tool results.
+                messages.Add(new AssistantAgentMessage(
+                    "", [new ToolCallContent(id, entry.ToolName, args)], FinishReason: StopReason.ToolUse));
+                messages.Add(new ToolResultAgentMessage(
+                    id, entry.ToolName,
+                    new AgentToolResult([new AgentToolContent(AgentToolContentType.Text, result.Content)]),
+                    IsError: result.ToolIsError));
+            }
+            else if (SessionContextProjector.IsVisibleOnResume(entry) &&
+                     ConvertSessionEntryToAgentMessage(entry) is { } message)
+            {
+                messages.Add(message);
+            }
+        }
+        return messages;
     }
 
     // Compaction-summary System entries are folded into the system prompt on resume

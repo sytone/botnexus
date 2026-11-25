@@ -60,15 +60,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
 
         var options = resolvedOptions ?? _options.CurrentValue;
 
-        // When the user explicitly requests compaction, override PreservedTurns
-        // to 0 so the compactor always has entries to summarise regardless of
-        // how few user turns exist. The user's intent ("compact now") supersedes
-        // the automatic heuristic. PreservedTurns=0 causes SplitHistory to place
-        // ALL visible entries in toSummarize (the summary captures full context
-        // including the most recent exchange).
         if (force)
         {
-            options = options with { PreservedTurns = 0 };
+            options = options.ForManualCompaction();
         }
         var sessionId = session.SessionId;
 
@@ -178,7 +172,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         // A skipped/aborted manual attempt has no changes to commit. In particular, never
         // publish its pre-summary detached snapshot over independently appended messages.
         var saveOutcome = detached && !applied ? SessionSaveOutcome.Persisted
-            : await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
+            : applied && result.MetadataChanges is { Count: > 0 } changes
+                ? await _sessions.SaveCompactionAsync(session, fence, changes, cancellationToken).ConfigureAwait(false)
+                : await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
         if (saveOutcome == SessionSaveOutcome.Conflict)
             return new SessionCompactionOutcome(result.Succeeded, false, HistoryReplaceOutcome.Aborted,
                 result.EntriesSummarized, result.EntriesPreserved, result.TokensBefore, result.TokensAfter,
@@ -315,6 +311,15 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
 
         if (reason == CompactionSkipReason.NoSummarizableTurns)
             return "Compaction skipped: no summarizable turns were found. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.MandatoryContextExceedsBudget)
+            return "Compaction aborted: the active request or unfinished tool groups exceed gateway.compaction.preservedTailTokens. " +
+                "Increase that budget, shorten the request, or complete the pending tools. Session history was not modified.";
+
+        if (reason == CompactionSkipReason.NoContextReduction)
+            return "Compaction aborted: the summary would not reduce estimated context tokens. " +
+                "Shorten the active request, finish pending tools, or increase the effective compaction trigger. " +
+                "Inspect /context for the active policy and limits. Session history was not modified.";
 
         if (reason == CompactionSkipReason.SummarizationTimeout)
             return "Compaction aborted: the summarization call timed out. Session history was not modified.";
