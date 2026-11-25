@@ -480,7 +480,7 @@ public sealed class CronScheduler(
     /// is archived next (best-effort) before the job row is removed, so a failure to
     /// archive surfaces an error and leaves the job intact for retry. Session cleanup (#2893)
     /// runs next and is best-effort in the opposite direction - a session-store failure is logged
-    /// and never aborts the delete.
+    /// and does not abort the delete. Caller cancellation aborts the operation.
     /// #3517: the archive is SKIPPED (with a warning) when cancellation was not actually observed,
     /// because a still-live run holds the conversation's write stripe and the archive is then
     /// guaranteed to fail. Aborting the delete on that guaranteed failure is what produced the
@@ -656,8 +656,9 @@ public sealed class CronScheduler(
     /// </list>
     /// <para>
     /// Best-effort by construction: the whole sweep is wrapped so a session-store outage is logged
-    /// and swallowed rather than aborting the delete. Leaving the job row behind because reclamation
-    /// failed would make the delete permanently unachievable against a broken store, which is a worse
+    /// and swallowed rather than aborting the delete, except when the caller cancels. Leaving the
+    /// job row behind because reclamation failed would make the delete permanently unachievable
+    /// against a broken store, which is a worse
     /// outcome than the leak this method exists to prevent. It runs after the conversation archive
     /// (which does still abort the delete on failure) and before the job row is removed.
     /// </para>
@@ -674,22 +675,27 @@ public sealed class CronScheduler(
         {
             using var scope = _scopeFactory.CreateScope();
             var sessions = scope.ServiceProvider.GetRequiredService<ISessionStore>();
-            var owned = await sessions.ListAsync(agentId, cancellationToken).ConfigureAwait(false);
+            var owned = await sessions.ListIdsByPrefixAsync(agentId, prefix, cancellationToken).ConfigureAwait(false);
 
-            foreach (var session in owned)
+            foreach (var sessionId in owned)
             {
-                if (!session.SessionId.Value.StartsWith(prefix, StringComparison.Ordinal))
-                    continue;
-
-                await sessions.DeleteAsync(session.SessionId, cancellationToken).ConfigureAwait(false);
+                await sessions.DeleteAsync(sessionId, cancellationToken).ConfigureAwait(false);
                 deleted++;
             }
+        }
+        catch (OperationCanceledException ex) when (cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogInformation(
+                ex,
+                "Cleanup for cron job '{JobId}' was cancelled; the job delete was not attempted. Some sessions may already have been deleted.",
+                job.Id);
+            throw;
         }
         catch (Exception ex)
         {
             _logger.LogWarning(
                 ex,
-                "Failed to delete owned cron run sessions for job '{JobId}' (prefix '{Prefix}'). The job delete continues; any surviving sessions are orphaned.",
+                "Failed to delete owned cron run sessions for job '{JobId}' (prefix '{Prefix}'). The job delete will be attempted if the request has not been cancelled; surviving sessions may be orphaned.",
                 job.Id,
                 prefix);
             return;

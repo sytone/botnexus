@@ -228,15 +228,15 @@ public sealed class LoopCommandTests
         (await fixture.Execute("/loop check queue")).IsError.ShouldBeFalse();
         var job = (await fixture.Store.ListAsync()).ShouldHaveSingleItem();
         var ownedSession = SessionId.From($"cron:{job.Id.Value}:run-one");
-        fixture.Sessions.Setup(store => store.ListAsync(Fixture.Agent, It.IsAny<CancellationToken>())).ReturnsAsync(
-        [new GatewaySession { SessionId = ownedSession, AgentId = Fixture.Agent },
-         new GatewaySession { SessionId = SessionId.From("human-session"), AgentId = Fixture.Agent },
-         new GatewaySession { SessionId = SessionId.From("cron:other-job:run-one"), AgentId = Fixture.Agent }]);
+        var sessionPrefix = $"cron:{job.Id.Value}:";
+        fixture.Sessions.Setup(store => store.ListIdsByPrefixAsync(Fixture.Agent, sessionPrefix, It.IsAny<CancellationToken>()))
+            .ReturnsAsync([ownedSession]);
         var runTask = fixture.Scheduler.RunNowAsync(job.Id);
         await action.Started.Task.WaitAsync(TimeSpan.FromSeconds(10));
         (await fixture.Execute($"/loop stop {job.Name}")).IsError.ShouldBeFalse();
         action.Token.IsCancellationRequested.ShouldBeTrue();
         (await runTask).Status.ShouldBe(CronRunStatus.Aborted);
+        fixture.Sessions.Verify(store => store.ListIdsByPrefixAsync(Fixture.Agent, sessionPrefix, It.IsAny<CancellationToken>()), Times.Once);
         fixture.Sessions.Verify(store => store.DeleteAsync(ownedSession, It.IsAny<CancellationToken>()), Times.Once);
         fixture.Sessions.Verify(store => store.DeleteAsync(It.IsAny<SessionId>(), It.IsAny<CancellationToken>()), Times.Once);
         fixture.Conversations.Verify(store => store.ArchiveAsync(It.IsAny<ConversationId>(), It.IsAny<string>(), It.IsAny<string?>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Never);

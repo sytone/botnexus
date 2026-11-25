@@ -34,6 +34,17 @@ public interface ISessionStore
     Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Returns IDs belonging to the agent whose IDs begin with the literal, ordinal prefix,
+    /// without loading session transcripts. Unsupported stores fail closed.
+    /// </summary>
+    /// <param name="agentId">The canonical conversation owner.</param>
+    /// <param name="sessionIdPrefix">The case-sensitive literal prefix.</param>
+    /// <param name="cancellationToken">Cancellation token.</param>
+    Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+        AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support transcript-free session ID lookup.");
+
+    /// <summary>
     /// Gets an existing session or creates a new one bound to the specified agent.
     /// </summary>
     /// <param name="sessionId">The session ID.</param>

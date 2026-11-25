@@ -12,6 +12,43 @@ public sealed partial class FileSessionStore
     private static readonly HashSet<string> SummaryFields = new(StringComparer.Ordinal)
     { "conversationId", "channelType", "sessionType", "createdAt", "updatedAt", "status", "messageCount" };
 
+    /// <inheritdoc />
+    public override async Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+        AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+        cancellationToken.ThrowIfCancellationRequested();
+        await _lock.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            var ids = new List<SessionId>();
+            var owners = new Dictionary<ConversationId, AgentId>();
+            foreach (var path in _fileSystem.Directory.EnumerateFiles(_storePath, "*.meta.json"))
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var name = _fileSystem.Path.GetFileName(path);
+                var id = SessionId.From(Uri.UnescapeDataString(name[..^".meta.json".Length]));
+                if (!id.Value.StartsWith(sessionIdPrefix, StringComparison.Ordinal))
+                    continue;
+
+                var metadata = await ReadSummaryMetadataAsync(_fileSystem, path, JsonOptions, cancellationToken).ConfigureAwait(false);
+                if (metadata?.ConversationId is not { } conversationId)
+                    throw new InvalidOperationException($"Session '{id}' has no canonical conversation ownership.");
+                if (!owners.TryGetValue(conversationId, out var owner))
+                {
+                    var ownership = await _conversationStore.GetOwnershipAsync(conversationId, cancellationToken).ConfigureAwait(false)
+                        ?? throw new InvalidOperationException($"Session '{id}' has no canonical conversation ownership.");
+                    owner = ownership.AgentId;
+                    owners.Add(conversationId, owner);
+                }
+                if (owner == agentId)
+                    ids.Add(id);
+            }
+            return ids;
+        }
+        finally { _lock.Release(); }
+    }
+
     private static async Task<SessionSummaryMeta?> ReadSummaryMetadataAsync(
         System.IO.Abstractions.IFileSystem fileSystem, string path, JsonSerializerOptions options,
         CancellationToken cancellationToken)

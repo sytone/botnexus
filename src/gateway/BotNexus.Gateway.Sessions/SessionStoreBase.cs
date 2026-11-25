@@ -34,6 +34,11 @@ public abstract class SessionStoreBase : ISessionStore
 
     public abstract Task<GatewaySession?> GetAsync(SessionId sessionId, CancellationToken cancellationToken = default);
 
+    /// <summary>Fails closed unless the store supports transcript-free ID lookup.</summary>
+    public virtual Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+        AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This store does not support transcript-free session ID lookup.");
+
     public abstract Task<GatewaySession> GetOrCreateAsync(SessionId sessionId, AgentId agentId, CancellationToken cancellationToken = default);
 
     public abstract Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);

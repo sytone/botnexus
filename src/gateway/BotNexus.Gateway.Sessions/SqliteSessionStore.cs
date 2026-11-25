@@ -261,6 +261,44 @@ public sealed partial class SqliteSessionStore : SessionStoreBase, IConversation
     }
 
     /// <inheritdoc />
+    public override async Task<IReadOnlyList<SessionId>> ListIdsByPrefixAsync(
+        AgentId agentId, string sessionIdPrefix, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(sessionIdPrefix);
+        cancellationToken.ThrowIfCancellationRequested();
+        await EnsureCreatedAsync(cancellationToken).ConfigureAwait(false);
+
+        var ownership = await _conversationStore.ListOwnershipAsync(agentId, cancellationToken).ConfigureAwait(false);
+        var ownedConversationIds = ownership
+            .Where(item => item.AgentId == agentId)
+            .Select(item => item.ConversationId.Value)
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+        if (ownedConversationIds.Length == 0)
+            return [];
+
+        return await RetryOnTransientAsync(async () =>
+        {
+            await using var connection = CreateConnection();
+            await connection.OpenAsync(cancellationToken).ConfigureAwait(false);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                SELECT id FROM sessions
+                WHERE substr(id, 1, length($prefix)) = $prefix COLLATE BINARY
+                  AND conversation_id IN (SELECT value FROM json_each($ownedConversationIds))
+                """;
+            command.Parameters.AddWithValue("$prefix", sessionIdPrefix);
+            command.Parameters.AddWithValue("$ownedConversationIds", JsonSerializer.Serialize(ownedConversationIds));
+
+            var ids = new List<SessionId>();
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken).ConfigureAwait(false);
+            while (await reader.ReadAsync(cancellationToken).ConfigureAwait(false))
+                ids.Add(SessionId.From(reader.GetString(0)));
+            return (IReadOnlyList<SessionId>)ids;
+        }, cancellationToken: cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <inheritdoc />
     public override async Task<int> RebindSessionsAsync(
         AgentId agentId,
         string sessionIdPrefix,
