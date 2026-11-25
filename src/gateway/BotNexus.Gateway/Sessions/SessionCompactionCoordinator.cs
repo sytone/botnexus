@@ -172,7 +172,9 @@ public sealed class SessionCompactionCoordinator : ISessionCompactionCoordinator
         // A skipped/aborted manual attempt has no changes to commit. In particular, never
         // publish its pre-summary detached snapshot over independently appended messages.
         var saveOutcome = detached && !applied ? SessionSaveOutcome.Persisted
-            : await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
+            : applied && result.MetadataChanges is { Count: > 0 } changes
+                ? await _sessions.SaveCompactionAsync(session, fence, changes, cancellationToken).ConfigureAwait(false)
+                : await _sessions.SaveAsync(session, fence, cancellationToken).ConfigureAwait(false);
         if (saveOutcome == SessionSaveOutcome.Conflict)
             return new SessionCompactionOutcome(result.Succeeded, false, HistoryReplaceOutcome.Aborted,
                 result.EntriesSummarized, result.EntriesPreserved, result.TokensBefore, result.TokensAfter,

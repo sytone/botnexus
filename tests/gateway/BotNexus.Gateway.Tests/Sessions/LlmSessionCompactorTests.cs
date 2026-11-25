@@ -1534,6 +1534,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue("this is the success path, not an aborted no-split cut");
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
 
         // The cut really did happen and really did NOT shed the oversized entry.
         session.GetHistorySnapshot()
@@ -1571,6 +1572,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         var result = await compactor.CompactAsync(session, byteOnlyOptions);
         result.Succeeded.ShouldBeTrue();
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         compactor.ShouldCompact(session.Session, byteOnlyOptions).ShouldBeFalse();
 
         // Same session, same suppressed byte signature - but now genuinely over the token budget.
@@ -1610,6 +1612,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue();
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
 
         session.AddEntry(new SessionEntry
@@ -1650,6 +1653,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue();
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         compactor.ShouldCompact(session.Session, options).ShouldBeFalse();
 
         // Fold the oversized entry away, and add a fresh oversized one in its place.
@@ -1715,6 +1719,7 @@ public sealed class LlmSessionCompactorTests(ITestOutputHelper output)
         var result = await compactor.CompactAsync(session, options);
         result.Succeeded.ShouldBeTrue();
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
 
         session.Session.Metadata.ShouldNotContainKey(
             LlmSessionCompactor.IneffectiveByteCompactionMetadataKey,

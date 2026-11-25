@@ -34,7 +34,8 @@ public sealed class ScopedCompactionCoordinatorTests
         compactor.Setup(value => value.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(result);
         var store = new Mock<ISessionStore>();
-        store.Setup(value => value.SaveAsync(session, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+        store.Setup(value => value.SaveCompactionAsync(session, It.IsAny<SessionWriteFence>(),
+                It.IsAny<IReadOnlyList<CompactionMetadataChange>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(saveOutcome);
         var options = new Mock<IOptionsMonitor<CompactionOptions>>();
         options.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions());
@@ -165,6 +166,9 @@ public sealed class ScopedCompactionCoordinatorTests
     {
         var store = new Mock<ISessionStore>();
         store.Setup(value => value.SaveAsync(It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(SessionSaveOutcome.Persisted);
+        store.Setup(value => value.SaveCompactionAsync(It.IsAny<GatewaySession>(), It.IsAny<SessionWriteFence>(),
+                It.IsAny<IReadOnlyList<CompactionMetadataChange>>(), It.IsAny<CancellationToken>()))
             .ReturnsAsync(SessionSaveOutcome.Persisted);
         var supervisor = new Mock<IAgentSupervisor>();
         supervisor.Setup(value => value.StopAsync(It.IsAny<AgentId>(), It.IsAny<SessionId>(), It.IsAny<CancellationToken>()))

@@ -151,7 +151,7 @@ public sealed class LlmSessionCompactorRaceTests
     // ─── Abort scenarios — destructive change happened ──────────────────────────
 
     [Fact]
-    public async Task SuccessfulResult_DoesNotChangeTriggerMetadataUntilApplied()
+    public async Task SuccessfulResult_DoesNotChangeTriggerMetadataUntilCommitted()
     {
         var session = CreateSession(
             ("user", "u1"),
@@ -170,6 +170,8 @@ public sealed class LlmSessionCompactorRaceTests
         session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(1000);
         session.Metadata.ShouldNotContainKey(LlmSessionCompactor.IneffectiveByteCompactionMetadataKey);
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(1000);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         session.Metadata.ShouldNotContainKey(LlmSessionCompactor.ProviderPromptTokensMetadataKey);
         session.Metadata.ShouldContainKey(LlmSessionCompactor.IneffectiveByteCompactionMetadataKey);
     }
@@ -193,6 +195,7 @@ public sealed class LlmSessionCompactorRaceTests
 
         result.Succeeded.ShouldBeTrue();
         session.TryApplyCompactionResult(result).ShouldBe(HistoryReplaceOutcome.Applied);
+        SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, result.MetadataChanges.ShouldNotBeNull());
         session.Metadata[LlmSessionCompactor.ProviderPromptTokensMetadataKey].ShouldBe(2000);
     }
 

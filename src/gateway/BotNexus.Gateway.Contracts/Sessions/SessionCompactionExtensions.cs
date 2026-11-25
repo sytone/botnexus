@@ -43,24 +43,33 @@ public static class SessionCompactionExtensions
                 "Check CompactionResult.Succeeded before calling TryApplyCompactionResult.");
         }
 
-        var outcome = session.TryReplaceHistoryFromSnapshot(
+        return session.TryReplaceHistoryFromSnapshot(
             result.CompactedHistory,
             result.SnapshotDestructiveVersion,
             result.SnapshotHistoryCount);
-        if (outcome != HistoryReplaceOutcome.Aborted && result.MetadataChanges is not null)
-        {
-            foreach (var change in result.MetadataChanges)
-            {
-                var present = session.Metadata.TryGetValue(change.Key, out var current);
-                if (present != change.ExpectedPresent || (present && !ReferenceEquals(current, change.ExpectedValue)))
-                    continue;
+    }
 
-                if (change.Replacement is null)
-                    session.Metadata.Remove(change.Key);
-                else
-                    session.Metadata[change.Key] = change.Replacement;
-            }
+    /// <summary>
+    /// Applies staged metadata changes only while their original values still match.
+    /// Stores use this on a private candidate before persistence and on the live session
+    /// only after the fenced write succeeds.
+    /// </summary>
+    public static void ApplyCompactionMetadata(
+        IDictionary<string, object?> metadata,
+        IReadOnlyList<CompactionMetadataChange> changes)
+    {
+        ArgumentNullException.ThrowIfNull(metadata);
+        ArgumentNullException.ThrowIfNull(changes);
+        foreach (var change in changes)
+        {
+            var present = metadata.TryGetValue(change.Key, out var current);
+            if (present != change.ExpectedPresent || (present && !ReferenceEquals(current, change.ExpectedValue)))
+                continue;
+
+            if (change.Replacement is null)
+                metadata.Remove(change.Key);
+            else
+                metadata[change.Key] = change.Replacement;
         }
-        return outcome;
     }
 }

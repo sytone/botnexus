@@ -13,6 +13,42 @@ namespace BotNexus.Gateway.Tests;
 public sealed class FileSessionStoreTests
 {
     [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task CompactionSave_ConditionallyPersistsMetadata(bool newerMeasurement)
+    {
+        using var fixture = new StoreFixture();
+        var store = fixture.CreateStore();
+        var session = await store.GetOrCreateAsync(SessionId.From("compaction-metadata"), AgentId.From("agent-a"));
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        await store.SaveAsync(session);
+        var previous = session.Metadata["lastProviderPromptTokens"];
+        var fence = SessionWriteFence.Capture(session);
+        if (newerMeasurement)
+            session.Metadata["lastProviderPromptTokens"] = 2000;
+        session.ReplaceHistory([new SessionEntry { Role = MessageRole.System, Content = "summary", IsCompactionSummary = true }]);
+
+        (await store.SaveCompactionAsync(session, fence,
+            [new("lastProviderPromptTokens", true, previous, null),
+             new("ineffectiveByteCompactionSignature", false, null, "signature")]))
+            .ShouldBe(SessionSaveOutcome.Persisted);
+
+        var cold = (await fixture.CreateStore().GetAsync(session.SessionId)).ShouldNotBeNull();
+        cold.GetHistorySnapshot().ShouldContain(entry => entry.IsCompactionSummary);
+        cold.Metadata["ineffectiveByteCompactionSignature"].ShouldNotBeNull().ToString().ShouldBe("signature");
+        if (newerMeasurement)
+        {
+            session.Metadata["lastProviderPromptTokens"].ShouldBe(2000);
+            cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("2000");
+        }
+        else
+        {
+            session.Metadata.ShouldNotContainKey("lastProviderPromptTokens");
+            cold.Metadata.ShouldNotContainKey("lastProviderPromptTokens");
+        }
+    }
+
+    [Theory]
     [InlineData(false, "append")]
     [InlineData(true, "append")]
     [InlineData(false, "replace")]

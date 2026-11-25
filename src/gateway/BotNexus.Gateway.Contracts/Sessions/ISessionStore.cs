@@ -58,6 +58,18 @@ public interface ISessionStore
     Task SaveAsync(GatewaySession session, CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Persists an applied compaction and its conditional metadata changes under the same
+    /// fence. Implementations must not publish the metadata on a rejected or failed write.
+    /// Stores without a coordinated implementation fail closed.
+    /// </summary>
+    Task<SessionSaveOutcome> SaveCompactionAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        IReadOnlyList<CompactionMetadataChange> metadataChanges,
+        CancellationToken cancellationToken = default)
+        => throw new NotSupportedException("This session store cannot persist compaction metadata with a fenced history write.");
+
+    /// <summary>
     /// Rebinds sessions owned by an agent whose IDs begin with an exact prefix to a target
     /// conversation, without rewriting sessions already bound to that conversation. This narrow
     /// operation lets migrations avoid loading transcript history for an ID-and-metadata change.

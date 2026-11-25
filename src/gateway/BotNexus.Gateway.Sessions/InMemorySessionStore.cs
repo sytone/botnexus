@@ -115,6 +115,30 @@ public sealed partial class InMemorySessionStore : SessionStoreBase
     }
 
     /// <inheritdoc />
+    public override async Task<SessionSaveOutcome> SaveCompactionAsync(
+        GatewaySession session,
+        SessionWriteFence fence,
+        IReadOnlyList<CompactionMetadataChange> metadataChanges,
+        CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(session);
+        ArgumentNullException.ThrowIfNull(metadataChanges);
+        await StampLegacyConversationAsync(session, cancellationToken).ConfigureAwait(false);
+        lock (_sync)
+        {
+            var current = _sessions.GetValueOrDefault(fence.ExpectedSessionId);
+            if (!SessionFenceEvaluator.Passes(fence, current))
+                return SessionSaveOutcome.Rebound;
+            if (fence.ExpectedContentFingerprint is { } expected &&
+                (current is null || SessionWriteFence.ContentFingerprint(current) != expected))
+                return SessionSaveOutcome.Conflict;
+            SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, metadataChanges);
+            _sessions[session.SessionId] = session;
+            return SessionSaveOutcome.Persisted;
+        }
+    }
+
+    /// <inheritdoc />
     public override Task<SessionAppendMutationResult> AppendEntriesAsync(SessionId sessionId,
         IReadOnlyList<SessionEntry> entries, CancellationToken cancellationToken = default)
     {
