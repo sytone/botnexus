@@ -16,6 +16,38 @@ namespace BotNexus.Gateway.Tests.Sessions;
 public sealed class ScopedCompactionCoordinatorTests
 {
     [Theory]
+    [InlineData(SessionSaveOutcome.Rebound)]
+    [InlineData(SessionSaveOutcome.Conflict)]
+    public async Task CompactAsync_RejectedSave_DoesNotChangeTriggerMetadata(SessionSaveOutcome saveOutcome)
+    {
+        var session = NewSession();
+        session.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "request" });
+        session.Metadata["lastProviderPromptTokens"] = 1000;
+        var original = session.Metadata["lastProviderPromptTokens"];
+        var snapshot = session.SnapshotHistoryForCompaction();
+        var result = CompactionResult.ForSuccess("summary", snapshot.Entries, 1, 0, 100, 50,
+            snapshot.DestructiveVersion, snapshot.Count) with
+        {
+            MetadataChanges = [new("lastProviderPromptTokens", true, original, null)]
+        };
+        var compactor = new Mock<ISessionCompactor>();
+        compactor.Setup(value => value.CompactAsync(session, It.IsAny<CompactionOptions>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(result);
+        var store = new Mock<ISessionStore>();
+        store.Setup(value => value.SaveAsync(session, It.IsAny<SessionWriteFence>(), It.IsAny<CancellationToken>()))
+            .ReturnsAsync(saveOutcome);
+        var options = new Mock<IOptionsMonitor<CompactionOptions>>();
+        options.SetupGet(value => value.CurrentValue).Returns(new CompactionOptions());
+        var coordinator = new SessionCompactionCoordinator(compactor.Object, store.Object,
+            Mock.Of<IAgentSupervisor>(), null, null, options.Object, NullLogger<SessionCompactionCoordinator>.Instance);
+
+        var outcome = await coordinator.CompactAsync(session.AgentId, session, CancellationToken.None);
+
+        outcome.Applied.ShouldBeFalse();
+        session.Metadata["lastProviderPromptTokens"].ShouldBeSameAs(original);
+    }
+
+    [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]
     [InlineData(true, false)]
