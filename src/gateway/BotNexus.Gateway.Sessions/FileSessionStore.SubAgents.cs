@@ -265,7 +265,7 @@ public sealed partial class FileSessionStore
 
     private async Task<bool> PersistWithReceiptsAsync(
         GatewaySession session, CancellationToken ct,
-        IReadOnlyDictionary<string, object?>? metadataOverride = null)
+        IReadOnlyList<CompactionMetadataChange>? metadataChanges = null)
     {
         var receipts = await ReadReceiptsAsync(session.SessionId, ct).ConfigureAwait(false);
         if (receipts.Count == 0) return false;
@@ -287,7 +287,7 @@ public sealed partial class FileSessionStore
                 entries.Count, snapshot.DestructiveVersion + 1);
             session.AcknowledgeHistoryPersistence(persisted, new Dictionary<long, long>());
         }
-        await WriteMetadataAsync(session, ct, metadataOverride).ConfigureAwait(false);
+        await WriteMetadataAsync(session, ct, metadataChanges).ConfigureAwait(false);
         return true;
     }
 }

@@ -233,13 +233,7 @@ public sealed partial class FileSessionStore : SessionStoreBase
                 (current is null || SessionWriteFence.ContentFingerprint(current) != expected))
                 return SessionSaveOutcome.Conflict;
 
-            Dictionary<string, object?>? stagedMetadata = null;
-            if (metadataChanges is not null)
-            {
-                stagedMetadata = new Dictionary<string, object?>(session.Metadata);
-                SessionCompactionExtensions.ApplyCompactionMetadata(stagedMetadata, metadataChanges);
-            }
-            await SaveUnderLockAsync(session, cancellationToken, stagedMetadata).ConfigureAwait(false);
+            await SaveUnderLockAsync(session, cancellationToken, metadataChanges).ConfigureAwait(false);
             if (metadataChanges is not null)
                 SessionCompactionExtensions.ApplyCompactionMetadata(session.Metadata, metadataChanges);
             return SessionSaveOutcome.Persisted;
@@ -298,9 +292,9 @@ public sealed partial class FileSessionStore : SessionStoreBase
     // Both aggregate save overloads must hold _lock for the complete persistence operation.
     private async Task SaveUnderLockAsync(
         GatewaySession session, CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, object?>? metadataOverride = null)
+        IReadOnlyList<CompactionMetadataChange>? metadataChanges = null)
     {
-        await PersistSessionAsync(session, cancellationToken, metadataOverride).ConfigureAwait(false);
+        await PersistSessionAsync(session, cancellationToken, metadataChanges).ConfigureAwait(false);
         _cache[session.SessionId] = session;
     }
 
@@ -1068,9 +1062,9 @@ public sealed partial class FileSessionStore : SessionStoreBase
 
     private async Task PersistSessionAsync(
         GatewaySession session, CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, object?>? metadataOverride = null)
+        IReadOnlyList<CompactionMetadataChange>? metadataChanges = null)
     {
-        if (await PersistWithReceiptsAsync(session, cancellationToken, metadataOverride).ConfigureAwait(false)) return;
+        if (await PersistWithReceiptsAsync(session, cancellationToken, metadataChanges).ConfigureAwait(false)) return;
         var historyPath = GetHistoryPath(session.SessionId);
         var history = session.CaptureHistoryForPersistence();
         if (history.RequiresReplacement)
@@ -1104,7 +1098,7 @@ public sealed partial class FileSessionStore : SessionStoreBase
         }
 
         session.AcknowledgeHistoryPersistence(history, new Dictionary<long, long>());
-        await WriteMetadataAsync(session, cancellationToken, metadataOverride).ConfigureAwait(false);
+        await WriteMetadataAsync(session, cancellationToken, metadataChanges).ConfigureAwait(false);
     }
 
     private async Task WriteToFileAsync(GatewaySession session, CancellationToken cancellationToken)
@@ -1122,9 +1116,12 @@ public sealed partial class FileSessionStore : SessionStoreBase
 
     private async Task WriteMetadataAsync(
         GatewaySession session, CancellationToken cancellationToken,
-        IReadOnlyDictionary<string, object?>? metadataOverride = null)
+        IReadOnlyList<CompactionMetadataChange>? metadataChanges = null)
     {
         var metaPath = GetMetaPath(session.SessionId);
+        var metadata = new Dictionary<string, object?>(session.Metadata);
+        if (metadataChanges is not null)
+            SessionCompactionExtensions.ApplyCompactionMetadata(metadata, metadataChanges);
         var meta = new SessionMeta(
             // P9-I (#674): never write AgentId on new sidecars. Agent ownership is hydrated
             // from Conversation.AgentId on load. Pre-existing sidecars that still carry it
@@ -1152,7 +1149,7 @@ public sealed partial class FileSessionStore : SessionStoreBase
             // Nullable<ConversationId>(HasValue=true, Value=default) and the Vogen STJ
             // converter would throw "uninitialized value object" at write time.
             session.ConversationId.IsInitialized() ? session.ConversationId : (ConversationId?)null,
-            (metadataOverride ?? session.Metadata).Count == 0 ? null : new Dictionary<string, object?>(metadataOverride ?? session.Metadata),
+            metadata.Count == 0 ? null : metadata,
             session.MessageCount);
         await SessionMetadataSidecar.WriteAsync(
             _fileSystem,

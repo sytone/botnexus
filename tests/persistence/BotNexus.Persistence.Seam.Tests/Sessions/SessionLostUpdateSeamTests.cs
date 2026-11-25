@@ -34,6 +34,40 @@ namespace BotNexus.Persistence.Seam.Tests.Sessions;
 public sealed class SessionLostUpdateSeamTests
 {
     [Fact]
+    public async Task DetachedCompactionSave_RejectsConcurrentAggregateSaveWithoutChangingMetadata()
+    {
+        using var fixture = new SessionSeamStoreFixture();
+        var seeded = await fixture.SeedAsync("s-compaction-vs-save");
+        seeded.Session.Metadata["lastProviderPromptTokens"] = 1000;
+        await seeded.Store.SaveAsync(seeded.Session);
+        var candidate = seeded.Session.CreateDetachedCopy();
+        var previous = candidate.Metadata["lastProviderPromptTokens"];
+        var fence = SessionWriteFence.Capture(candidate) with
+        {
+            ExpectedContentFingerprint = SessionWriteFence.ContentFingerprint(candidate)
+        };
+        candidate.ReplaceHistory([new SessionEntry
+        {
+            Role = MessageRole.System, Content = "summary", IsCompactionSummary = true
+        }]);
+        var writer = fixture.CreateStore();
+        var newer = (await writer.GetAsync(seeded.Session.SessionId)).ShouldNotBeNull();
+        newer.Metadata["lastProviderPromptTokens"] = 2000;
+        newer.AddEntry(new SessionEntry { Role = MessageRole.User, Content = "concurrent" });
+        await writer.SaveAsync(newer);
+
+        var outcome = await seeded.Store.SaveCompactionAsync(candidate, fence,
+            [new("lastProviderPromptTokens", true, previous, null)]);
+
+        outcome.ShouldBe(SessionSaveOutcome.Conflict);
+        candidate.Metadata["lastProviderPromptTokens"].ShouldBeSameAs(previous);
+        var cold = (await fixture.CreateStore().GetAsync(candidate.SessionId)).ShouldNotBeNull();
+        cold.Metadata["lastProviderPromptTokens"].ShouldNotBeNull().ToString().ShouldBe("2000");
+        cold.GetHistorySnapshot().ShouldContain(entry => entry.Content == "concurrent");
+        cold.GetHistorySnapshot().ShouldNotContain(entry => entry.IsCompactionSummary);
+    }
+
+    [Fact]
     public async Task FencedFinalizerSave_IsSuppressed_WhenACompetingResetSealsTheRowMidRun()
     {
         // The named non-vacuity target for #3327's sessions clause. A run captures its fence, a
