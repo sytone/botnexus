@@ -71,6 +71,14 @@ public static class PlatformConfigurationSources
         string configPath,
         Action<string, Exception?>? onLoadFailure = null,
         IFileSystem? fileSystem = null)
+        => AddPlatformConfigurationCore(builder, configPath, onLoadFailure, fileSystem, reloadOnChange: true);
+
+    private static IConfigurationBuilder AddPlatformConfigurationCore(
+        IConfigurationBuilder builder,
+        string configPath,
+        Action<string, Exception?>? onLoadFailure,
+        IFileSystem? fileSystem,
+        bool reloadOnChange)
     {
         ArgumentNullException.ThrowIfNull(builder);
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
@@ -80,7 +88,7 @@ public static class PlatformConfigurationSources
         builder.AddResilientJsonFile(
             configPath,
             optional: true,
-            reloadOnChange: true,
+            reloadOnChange: reloadOnChange,
             onLoadFailure: onLoadFailure);
 
         // #3514: registered whenever the store FILE exists, and the file is created by an explicit
@@ -106,15 +114,38 @@ public static class PlatformConfigurationSources
     }
 
     /// <summary>
-    /// Builds a bound <see cref="PlatformConfig"/> for a short-lived process that has no host.
+    /// Reads a one-shot configuration snapshot rooted at a BotNexus home, releasing its providers
+    /// before returning. Use this for short-lived CLI reads that do not observe reloads.
+    /// </summary>
+    public static PlatformConfig BuildSnapshotForHome(string homePath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
+        return BuildSnapshot(Path.Combine(homePath, GeneratedProjectionFileName));
+    }
+
+    /// <summary>
+    /// Reads a one-shot configuration snapshot without retaining file watchers or store polling.
+    /// </summary>
+    public static PlatformConfig BuildSnapshot(string configPath)
+    {
+        var builder = new ConfigurationBuilder();
+        AddPlatformConfigurationCore(builder, configPath, null, null, reloadOnChange: false);
+        return BuildSnapshot(builder.Build(), configPath);
+    }
+
+    /// <summary>
+    /// Reads a one-shot configuration snapshot through an injected filesystem.
+    /// </summary>
+    public static PlatformConfig BuildSnapshot(string configPath, IFileSystem fileSystem)
+        => BuildSnapshot(BuildInjectedConfiguration(configPath, fileSystem, null), configFilePath: null);
+
+    /// <summary>
+    /// Builds a bound, reloadable <see cref="PlatformConfig"/> monitor for a process with no host.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// For the CLI, whose configuration path is chosen per invocation by <c>--target</c> and is
-    /// therefore not known when the service container is built. It returns an
-    /// <see cref="IOptionsMonitor{T}"/> rather than a bare instance so callers use the same type the
-    /// gateway does; a CLI process is short-lived and will rarely observe a reload, but having one
-    /// read type across both hosts is what stops a second read path re-appearing.
+    /// Callers that need a single read rather than reload notifications should use
+    /// <see cref="BuildSnapshot(string)"/> so its providers are released after binding.
     /// </para>
     /// <para>
     /// This is composition, not loading. Every step - parse, bind, validate, fall back to
@@ -158,6 +189,12 @@ public static class PlatformConfigurationSources
         string configPath,
         IFileSystem fileSystem,
         Action<string, Exception?>? onLoadFailure = null)
+        => BuildMonitor(BuildInjectedConfiguration(configPath, fileSystem, onLoadFailure), configFilePath: null);
+
+    private static IConfigurationRoot BuildInjectedConfiguration(
+        string configPath,
+        IFileSystem fileSystem,
+        Action<string, Exception?>? onLoadFailure)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(fileSystem);
@@ -188,12 +225,22 @@ public static class PlatformConfigurationSources
         // The stream provider retains the exact parsed document, so post-configuration can perform
         // raw-shape normalization without rereading a physical file that may not exist (or may be
         // stale relative to a higher-precedence SQLite provider).
-        return BuildMonitor(builder.Build(), configFilePath: null);
+        return builder.Build();
+    }
+
+    private static PlatformConfig BuildSnapshot(IConfigurationRoot configuration, string? configFilePath)
+    {
+        using var rootLifetime = (IDisposable)configuration;
+        using var services = BuildServices(configuration, configFilePath);
+        return services.GetRequiredService<IOptionsMonitor<PlatformConfig>>().CurrentValue;
     }
 
     private static IOptionsMonitor<PlatformConfig> BuildMonitor(
         IConfiguration configuration,
         string? configFilePath)
+        => BuildServices(configuration, configFilePath).GetRequiredService<IOptionsMonitor<PlatformConfig>>();
+
+    private static ServiceProvider BuildServices(IConfiguration configuration, string? configFilePath)
     {
         var services = new ServiceCollection();
         // IConfiguration must be registered, not merely used to bind: PlatformConfigPostConfigure
@@ -206,6 +253,6 @@ public static class PlatformConfigurationSources
         services.AddSingleton<IPostConfigureOptions<PlatformConfig>>(
             new PlatformConfigPostConfigure(configuration, configFilePath));
 
-        return services.BuildServiceProvider().GetRequiredService<IOptionsMonitor<PlatformConfig>>();
+        return services.BuildServiceProvider();
     }
 }
