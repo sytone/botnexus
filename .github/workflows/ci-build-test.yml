@@ -145,6 +145,10 @@ jobs:
       - name: Build
         run: dotnet build dirs.proj --no-restore
 
+      - name: Provision file watcher capacity
+        # Match the PR job and Azure runner for the same CORE test scope.
+        run: sudo sysctl -w fs.inotify.max_user_instances=8192 fs.inotify.max_user_watches=524288
+
       - name: Test
         # Core scope: everything except the browser/E2E projects. The filter is kept identical to
         # the core-tests job above and to infra/buildtest/runner/entrypoint.ps1 'core' mode --

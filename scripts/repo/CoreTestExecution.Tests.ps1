@@ -77,6 +77,10 @@ $workflow = Get-Content -LiteralPath $workflowPath -Raw
 Assert-True ($workflow -match 'Invoke-BoundedCoreTests\.ps1') 'GitHub CORE must use the bounded runner.'
 Assert-True ($workflow -notmatch 'run: dotnet test tests/dirs\.proj --no-build --filter') 'GitHub CORE must not invoke an unbounded aggregate test host.'
 Assert-True ($workflow -match "CompletionPath.*completion-core\.json") 'GitHub CORE contract validation must require the completion receipt.'
+foreach ($jobName in @('core-tests', 'full-tests')) {
+    $job = [regex]::Match($workflow, "(?ms)^  ${jobName}:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*").Value
+    Assert-True ($job -match '(?s)sudo sysctl -w fs\.inotify\.max_user_instances=8192 fs\.inotify\.max_user_watches=524288.*Invoke-BoundedCoreTests\.ps1') "$jobName must provision the shared CORE watcher capacity before testing."
+}
 function Test-CoverageOidcContract([string]$WorkflowText) {
     $fullJob = [regex]::Match($WorkflowText, '(?ms)^  full-tests:\r?\n(?:(?!^  [a-zA-Z0-9_-]+:).)*').Value
     if ([string]::IsNullOrWhiteSpace($fullJob)) { return $false }

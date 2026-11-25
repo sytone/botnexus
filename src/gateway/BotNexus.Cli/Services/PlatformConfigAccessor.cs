@@ -89,14 +89,14 @@ public sealed class PlatformConfigAccessor : IPlatformConfigAccessor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(homePath);
 
-        return PlatformConfigurationSources.BuildMonitorForHome(homePath).CurrentValue;
+        return PlatformConfigurationSources.BuildSnapshotForHome(homePath);
     }
 
     public PlatformConfig Get(string configPath)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
 
-        return PlatformConfigurationSources.BuildMonitor(configPath).CurrentValue;
+        return PlatformConfigurationSources.BuildSnapshot(configPath);
     }
 
     /// <inheritdoc />
@@ -105,6 +105,6 @@ public sealed class PlatformConfigAccessor : IPlatformConfigAccessor
         ArgumentException.ThrowIfNullOrWhiteSpace(configPath);
         ArgumentNullException.ThrowIfNull(fileSystem);
 
-        return PlatformConfigurationSources.BuildMonitor(configPath, fileSystem).CurrentValue;
+        return PlatformConfigurationSources.BuildSnapshot(configPath, fileSystem);
     }
 }
