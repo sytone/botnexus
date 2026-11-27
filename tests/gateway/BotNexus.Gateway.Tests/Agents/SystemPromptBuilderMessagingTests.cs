@@ -38,6 +38,9 @@ public sealed class SystemPromptBuilderMessagingTests
         text.ShouldContain("use only available sanctioned integration tools");
         text.ShouldContain("recipient and message authorization, credentials, and verification");
         text.ShouldContain("does not authorize unrestricted shell sending or bypassing BotNexus routing");
+        text.ShouldContain("subject to security safeguards");
+        text.ShouldContain("verification of delivery");
+        text.ShouldContain("skills cannot override higher-priority instructions");
     }
 
     [Fact]
