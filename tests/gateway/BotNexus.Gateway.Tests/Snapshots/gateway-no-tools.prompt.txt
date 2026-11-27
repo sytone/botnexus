@@ -1,4 +1,4 @@
-﻿<tooling>
+<tooling>
 You are a personal assistant running inside BotNexus.
 Structured tool definitions are the source of truth for tool names, descriptions, and parameters.
 Tool names are case-sensitive. Call tools exactly as listed in the structured tool definitions.
