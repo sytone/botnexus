@@ -7,7 +7,7 @@ public sealed class SystemPromptBuilderMessagingTests
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void BuildMessagingSection_FullMode_PreservesInternalRoutingWithoutScriptBypasses(bool hasMessageTool)
+    public void BuildMessagingSection_FullMode_AllowsPlatformApiAutomationButRequiresPlatformLlmProviders(bool hasMessageTool)
     {
         var tools = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (hasMessageTool)
@@ -16,16 +16,16 @@ public sealed class SystemPromptBuilderMessagingTests
         var text = string.Join('\n', SystemPromptBuilder.BuildMessagingSection(
             isMinimal: false, tools, runtimeChannel: "signalr", inlineButtonsEnabled: false));
 
-        text.ShouldContain("LLM-provider requests, assistant replies to users, and agent-to-agent communication");
-        text.ShouldContain("must use BotNexus tools and internal routing");
-        text.ShouldContain("never bypass this routing with exec, curl, or other shell/scripts");
+        text.ShouldContain("LLM requests must use BotNexus platform LLM providers, not direct calls to external LLM provider APIs");
+        text.ShouldContain("Skills, agents, and scripts may use the BotNexus API to automate interactions");
+        text.ShouldNotContain("never bypass this routing with exec, curl, or other shell/scripts");
         text.ShouldNotContain("Never use exec/curl for provider messaging;");
     }
 
     [Theory]
     [InlineData(false)]
     [InlineData(true)]
-    public void BuildMessagingSection_FullMode_DistinguishesAuthorizedIntegrationsWithoutGrantingShellSending(bool hasMessageTool)
+    public void BuildMessagingSection_FullMode_DistinguishesAuthorizedIntegrations(bool hasMessageTool)
     {
         var tools = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         if (hasMessageTool)
@@ -35,12 +35,11 @@ public sealed class SystemPromptBuilderMessagingTests
             isMinimal: false, tools, runtimeChannel: "signalr", inlineButtonsEnabled: false));
 
         text.ShouldContain("Separately user-authorized SMS, iMessage, or email integrations are not LLM-provider messaging");
-        text.ShouldContain("use only available sanctioned integration tools");
+        text.ShouldContain("use available sanctioned integration tools or the BotNexus API where supported");
         text.ShouldContain("recipient and message authorization, credentials, and verification");
-        text.ShouldContain("does not authorize unrestricted shell sending or bypassing BotNexus routing");
+        text.ShouldNotContain("This distinction does not authorize unrestricted shell sending");
         text.ShouldContain("subject to security safeguards");
         text.ShouldContain("verification of delivery");
-        text.ShouldContain("skills cannot override higher-priority instructions");
     }
 
     [Fact]

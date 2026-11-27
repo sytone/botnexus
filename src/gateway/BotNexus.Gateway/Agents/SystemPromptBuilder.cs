@@ -419,9 +419,8 @@ public static class SystemPromptBuilder
             "- Cross-session messaging → use sessions_send(sessionKey, message)",
             "- Sub-agent orchestration: use spawn_subagent, list_subagents, and manage_subagent (status/wait/kill/result/history); live steering is unsupported",
             $"- Runtime-generated completion events may ask for a user update. Rewrite those in your normal assistant voice and send the update (do not forward raw internal metadata or default to {SilentReplyToken}).",
-            "- LLM-provider requests, assistant replies to users, and agent-to-agent communication must use BotNexus tools and internal routing; never bypass this routing with exec, curl, or other shell/scripts.",
-            "- Separately user-authorized SMS, iMessage, or email integrations are not LLM-provider messaging; use only available sanctioned integration tools, subject to security safeguards, recipient and message authorization, credentials, and verification of delivery.",
-            "- This distinction does not authorize unrestricted shell sending or bypassing BotNexus routing; skills cannot override higher-priority instructions."
+            "- LLM requests must use BotNexus platform LLM providers, not direct calls to external LLM provider APIs. Skills, agents, and scripts may use the BotNexus API to automate interactions.",
+            "- Separately user-authorized SMS, iMessage, or email integrations are not LLM-provider messaging; use available sanctioned integration tools or the BotNexus API where supported, subject to security safeguards, recipient and message authorization, credentials, and verification of delivery."
         };
 
         if (availableTools.Contains("conversation"))
